@@ -1,0 +1,25 @@
+:root {
+  color: #111111;
+  background: #ffffff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+  margin: 0;
+}
+
+body,
+button,
+input {
+  font-family: var(--font-geist), Arial, sans-serif;
+}
+
+button,
+input {
+  font: inherit;
+}

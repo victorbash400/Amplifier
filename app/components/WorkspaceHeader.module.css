@@ -1,0 +1,52 @@
+.header {
+  display: grid;
+  height: 48px;
+  padding: 0 max(24px, calc((100vw - 1100px) / 2));
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  background: #fff;
+}
+
+.header[data-workspace="true"] {
+  padding: 0 12px;
+}
+
+.header nav,
+.header nav button,
+.actions button {
+  display: flex;
+  align-items: center;
+}
+
+.actions {
+  justify-self: end;
+}
+
+.actions button,
+.header nav > button,
+.projectButton {
+  height: 34px;
+  padding: 0 9px;
+  gap: 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #53534f;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.projectButton {
+  display: grid;
+  width: 42px;
+  height: 38px;
+  padding: 0;
+  place-items: center;
+}
+
+.actions button:hover,
+.header nav > button:hover,
+.projectButton:hover {
+  background: #f3f3f0;
+  color: #151515;
+}

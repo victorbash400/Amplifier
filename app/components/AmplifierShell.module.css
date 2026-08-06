@@ -1,0 +1,25 @@
+.shell {
+  min-height: 100svh;
+  background: #fff;
+}
+
+.formArea {
+  display: grid;
+  min-height: calc(100svh - 48px);
+  padding: 40px 24px;
+  place-items: center;
+}
+
+.error {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 90;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #e1c9c6;
+  border-radius: 9px;
+  background: #fff;
+  color: #8f302b;
+  font-size: 11px;
+}

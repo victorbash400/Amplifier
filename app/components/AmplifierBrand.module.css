@@ -1,0 +1,10 @@
+.brand {
+  display: flex;
+  margin: 0;
+  align-items: center;
+  gap: 7px;
+  color: #171717;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}

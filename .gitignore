@@ -1,0 +1,20 @@
+# Frontend
+node_modules/
+.next/
+out/
+
+# Backend
+**/.venv/
+**/venv/
+__pycache__/
+*.py[cod]
+
+# Environment
+**/.env
+**/.env.*
+
+# Markdown
+*.md
+
+# System
+.DS_Store

@@ -1,0 +1,71 @@
+.projects {
+  min-height: calc(100svh - 48px);
+  padding: 36px 40px;
+}
+
+.projects nav {
+  display: grid;
+  max-width: 1100px;
+  margin: 28px auto 0;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 22px;
+}
+
+.card {
+  position: relative;
+  min-width: 0;
+}
+
+.open {
+  display: grid;
+  width: 100%;
+  min-height: 132px;
+  padding: 18px 12px 13px;
+  place-items: center;
+  gap: 9px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #343430;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.open:hover,
+.card:focus-within .open {
+  background: #f6f6f6;
+}
+
+.open span {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.delete {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: #fff;
+  color: #8b8b86;
+  cursor: pointer;
+  opacity: 0;
+  place-items: center;
+}
+
+.card:hover .delete,
+.card:focus-within .delete {
+  opacity: 1;
+}
+
+.delete:hover {
+  background: #f1f1ee;
+  color: #9c2f2f;
+}
