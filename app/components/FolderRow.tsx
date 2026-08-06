@@ -13,7 +13,7 @@ type FolderRowProps = {
   expanded: Set<string>;
   selectedId: string;
   onCreateFolder: (parentId: string) => void;
-  onDeleteFile: (id: string) => void;
+  onDeleteFile: (file: ProjectFile) => void;
   onDeleteFolder: (id: string) => void;
   onOpenFile: (file: ProjectFile) => void;
   onSelect: (id: string) => void;

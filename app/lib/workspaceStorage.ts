@@ -15,5 +15,9 @@ export function loadWorkspace(): WorkspaceData {
 }
 
 export function saveWorkspace(workspace: WorkspaceData) {
-  window.localStorage.setItem(storageKey, JSON.stringify(workspace));
+  const durable = {
+    ...workspace,
+    files: workspace.files.filter((file) => !file.pending).map((file) => ({ ...file, localUrl: undefined })),
+  };
+  window.localStorage.setItem(storageKey, JSON.stringify(durable));
 }

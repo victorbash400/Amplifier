@@ -1,7 +1,8 @@
 "use client";
 
-import { ChangeEvent, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Plus, Search, Upload } from "lucide-react";
+import { uploadProjectAsset } from "../lib/assetUploads";
 import type { AmplifierProject, ProjectFile, ProjectFolder } from "../types/workspace";
 import { FileRow } from "./FileRow";
 import { FolderRow } from "./FolderRow";
@@ -21,9 +22,16 @@ export function FileSidebar({ project, folders, files, onFoldersChange, onFilesC
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState("root");
   const [expanded, setExpanded] = useState(() => new Set(["root"]));
+  const [uploadError, setUploadError] = useState<string>();
+  const localUrls = useRef(new Set<string>());
   const normalizedQuery = query.trim().toLowerCase();
   const visibleFiles = useMemo(() => files.filter((file) => file.name.toLowerCase().includes(normalizedQuery)), [files, normalizedQuery]);
   const visibleFolders = useMemo(() => folders.filter((folder) => folder.name.toLowerCase().includes(normalizedQuery) || hasMatchingDescendant(folder.id, folders, visibleFiles)), [folders, normalizedQuery, visibleFiles]);
+
+  useEffect(() => () => {
+    for (const url of localUrls.current) URL.revokeObjectURL(url);
+    localUrls.current.clear();
+  }, []);
 
   function toggle(id: string) {
     setExpanded((current) => {
@@ -48,16 +56,69 @@ export function FileSidebar({ project, folders, files, onFoldersChange, onFilesC
     setSelectedId("root");
   }
 
-  function upload(event: ChangeEvent<HTMLInputElement>) {
+  async function upload(event: ChangeEvent<HTMLInputElement>) {
     const selectedFiles = Array.from(event.target.files || []);
     if (!selectedFiles.length) return;
-    onFilesChange([...files, ...selectedFiles.map((file): ProjectFile => ({ id: crypto.randomUUID(), projectId: project.id, folderId: selectedId, name: file.name, size: file.size, type: file.type }))]);
     event.target.value = "";
+    setUploadError(undefined);
     setExpanded((current) => new Set(current).add(selectedId));
+    const pending = selectedFiles.map((file) => {
+      const localUrl = URL.createObjectURL(file);
+      localUrls.current.add(localUrl);
+      return { id: crypto.randomUUID(), file, localUrl };
+    });
+    let nextFiles: ProjectFile[] = [...files, ...pending.map(({ id, file, localUrl }) => ({ id, projectId: project.id, folderId: selectedId, name: file.name, size: file.size, type: file.type || "application/octet-stream", pending: true, localUrl }))];
+    onFilesChange(nextFiles);
+    const failures = await parallelMap(pending, 3, async ({ id, file, localUrl }) => {
+      try {
+        const uploaded = await uploadProjectAsset({ assetId: id, file, folderId: selectedId, localUrl, projectId: project.id, onProgress: () => undefined });
+        nextFiles = nextFiles.map((item) => item.id === id ? uploaded : item);
+        onFilesChange(nextFiles);
+        return undefined;
+      } catch (reason) {
+        nextFiles = nextFiles.filter((item) => item.id !== id);
+        onFilesChange(nextFiles);
+        URL.revokeObjectURL(localUrl);
+        localUrls.current.delete(localUrl);
+        return `${file.name}: ${reason instanceof Error ? reason.message : "Upload failed"}`;
+      }
+    });
+    const messages = failures.filter((failure): failure is string => Boolean(failure));
+    if (messages.length) setUploadError(messages.join(" · "));
+  }
+
+  async function deleteFile(file: ProjectFile) {
+    onFilesChange(files.filter((item) => item.id !== file.id));
+    setUploadError(undefined);
+    if (!file.objectKey) return;
+    try {
+      const response = await fetch("/api/assets/uploads", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, objectKey: file.objectKey }) });
+      if (!response.ok) throw new Error((await response.json()).error || `Could not delete ${file.name}`);
+      if (file.localUrl) {
+        URL.revokeObjectURL(file.localUrl);
+        localUrls.current.delete(file.localUrl);
+      }
+    } catch (reason) {
+      onFilesChange(files);
+      setUploadError(reason instanceof Error ? reason.message : `Could not delete ${file.name}`);
+    }
   }
 
   const rootExpanded = expanded.has("root");
-  return <aside className={styles.sidebar} aria-label="Assets"><section className={styles.search}><Search size={14} /><input aria-label="Search assets" onChange={(event) => setQuery(event.target.value)} placeholder="Search" value={query} /></section><nav className={styles.actions} aria-label="Asset actions"><label aria-label="Upload files" title="Upload files"><Upload size={16} /><input multiple onChange={upload} type="file" /></label><button aria-label="New folder" onClick={() => createFolder()} title="New folder" type="button"><Plus size={16} /></button></nav><nav className={styles.tree} aria-label="Asset tree"><p className={styles.folderRow} data-selected={selectedId === "root"}><button aria-label={`${rootExpanded ? "Collapse" : "Expand"} ${project.name}`} className={styles.chevron} onClick={() => toggle("root")} type="button">{rootExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</button><button className={styles.folderName} onClick={() => setSelectedId("root")} type="button"><FolderIcon color={project.color} /><strong>{project.name}</strong></button><button aria-label="New folder in project" className={styles.rowAction} onClick={() => createFolder("root")} type="button"><Plus size={15} /></button></p>{rootExpanded && visibleFiles.filter((file) => file.folderId === "root").map((file) => <FileRow file={file} key={file.id} onDelete={(id) => onFilesChange(files.filter((item) => item.id !== id))} onOpen={onOpenFile} />)}{rootExpanded && visibleFolders.filter((folder) => !folder.parentId).map((folder) => <FolderRow expanded={expanded} files={visibleFiles} folder={folder} folders={visibleFolders} key={folder.id} onCreateFolder={createFolder} onDeleteFile={(id) => onFilesChange(files.filter((item) => item.id !== id))} onDeleteFolder={deleteFolder} onOpenFile={onOpenFile} onSelect={setSelectedId} onToggle={toggle} selectedId={selectedId} />)}</nav></aside>;
+  return <aside className={styles.sidebar} aria-label="Assets"><section className={styles.search}><Search size={14} /><input aria-label="Search assets" onChange={(event) => setQuery(event.target.value)} placeholder="Search" value={query} /></section><nav className={styles.actions} aria-label="Asset actions"><label aria-label="Upload files" title="Upload files"><Upload size={16} /><input multiple onChange={upload} type="file" /></label><button aria-label="New folder" onClick={() => createFolder()} title="New folder" type="button"><Plus size={16} /></button></nav>{uploadError && <p className={styles.uploadError} role="alert">{uploadError}</p>}<nav className={styles.tree} aria-label="Asset tree"><p className={styles.folderRow} data-selected={selectedId === "root"}><button aria-label={`${rootExpanded ? "Collapse" : "Expand"} ${project.name}`} className={styles.chevron} onClick={() => toggle("root")} type="button">{rootExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</button><button className={styles.folderName} onClick={() => setSelectedId("root")} type="button"><FolderIcon color={project.color} /><strong>{project.name}</strong></button><button aria-label="New folder in project" className={styles.rowAction} onClick={() => createFolder("root")} type="button"><Plus size={15} /></button></p>{rootExpanded && visibleFiles.filter((file) => file.folderId === "root").map((file) => <FileRow file={file} key={file.id} onDelete={deleteFile} onOpen={onOpenFile} />)}{rootExpanded && visibleFolders.filter((folder) => !folder.parentId).map((folder) => <FolderRow expanded={expanded} files={visibleFiles} folder={folder} folders={visibleFolders} key={folder.id} onCreateFolder={createFolder} onDeleteFile={deleteFile} onDeleteFolder={deleteFolder} onOpenFile={onOpenFile} onSelect={setSelectedId} onToggle={toggle} selectedId={selectedId} />)}</nav></aside>;
+}
+
+async function parallelMap<T, R>(items: T[], concurrency: number, task: (item: T) => Promise<R>) {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await task(items[index]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  return results;
 }
 
 function descendantsOf(id: string, folders: ProjectFolder[]) {

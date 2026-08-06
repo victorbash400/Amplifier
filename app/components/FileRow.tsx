@@ -1,10 +1,10 @@
-import { Trash2 } from "lucide-react";
+import { LoaderCircle, Trash2 } from "lucide-react";
 import type { ProjectFile } from "../types/workspace";
 import { FileTypeIcon } from "./FileTypeIcon";
 import styles from "./FileSidebar.module.css";
 
-export function FileRow({ file, onDelete, onOpen }: { file: ProjectFile; onDelete: (id: string) => void; onOpen: (file: ProjectFile) => void }) {
-  return <p className={styles.fileRow}><button className={styles.fileName} onClick={() => onOpen(file)} type="button"><span><FileTypeIcon name={file.name} type={file.type} /></span><span>{file.name}</span></button><small>{formatBytes(file.size)}</small><button aria-label={`Delete ${file.name}`} className={styles.rowAction} onClick={() => onDelete(file.id)} type="button"><Trash2 size={13} /></button></p>;
+export function FileRow({ file, onDelete, onOpen }: { file: ProjectFile; onDelete: (file: ProjectFile) => void; onOpen: (file: ProjectFile) => void }) {
+  return <p className={styles.fileRow}><button className={styles.fileName} draggable={!file.pending} onClick={() => onOpen(file)} onDragStart={(event) => { event.dataTransfer.effectAllowed = "copy"; event.dataTransfer.setData("application/x-amplifier-asset", file.id); event.dataTransfer.setData("text/plain", file.id); }} type="button"><span><FileTypeIcon name={file.name} type={file.type} /></span><span>{file.name}</span>{file.pending && <LoaderCircle aria-label="Uploading" className={styles.pending} size={12} />}</button><small>{formatBytes(file.size)}</small><button aria-label={`Delete ${file.name}`} className={styles.rowAction} disabled={file.pending} onClick={() => onDelete(file)} type="button"><Trash2 size={13} /></button></p>;
 }
 
 function formatBytes(bytes: number) {

@@ -21,6 +21,13 @@ export type ProjectFile = {
   name: string;
   size: number;
   type: string;
+  objectKey?: string;
+  generation?: string;
+  pending?: boolean;
+  localUrl?: string;
+  duration?: number;
+  width?: number;
+  height?: number;
 };
 
 export type WorkspaceData = {

@@ -137,3 +137,7 @@
 .fileName > span:first-child { display: grid; width: 22px; height: 22px; flex: 0 0 22px; place-items: center; }
 .fileName > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fileRow small { color: #aaa; font-size: 9px; }
+.pending { flex: none; animation: pending-spin 900ms linear infinite; }
+.uploadError { margin: 0 4px 7px; color: #9d3028; font-size: 9px; }
+
+@keyframes pending-spin { to { transform: rotate(360deg); } }
