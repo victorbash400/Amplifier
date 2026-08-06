@@ -1,2 +1,7 @@
 fastapi
+clickhouse-connect
+google-adk
+google-genai
+mcp-clickhouse
+python-dotenv
 uvicorn[standard]
