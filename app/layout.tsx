@@ -10,7 +10,10 @@ const geist = Geist({
 export const metadata: Metadata = {
   title: "Amplifier",
   description: "A clean workspace for Amplifier projects.",
-  icons: { icon: "/appicon.svg", shortcut: "/appicon.svg" },
+  icons: {
+    icon: "/amplifier-speaker-loud-svgrepo-com.svg",
+    shortcut: "/amplifier-speaker-loud-svgrepo-com.svg",
+  },
 };
 
 export default function RootLayout({
