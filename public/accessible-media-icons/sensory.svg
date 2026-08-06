@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" role="img" aria-labelledby="title">
+  <title id="title">Sensory</title>
+  <path d="M22 56V45c-4.1-4.8-6-10.2-6-16 0-9.5 7-16 16.5-16 10 0 17 6.4 17 16v4.5L53 40c.8 1.5-.2 3.2-1.9 3.2H48V49c0 2.2-1.8 4-4 4h-7v5"/>
+  <path d="m31 2-3 7h6l-3 7"/>
+  <path d="M9.5 23.5c-3.3 5-3.3 11 0 16M5 20c-5 7.3-5 16.7 0 24M55 23.5c3.3 5 3.3 11 0 16M59.5 20c5 7.3 5 16.7 0 24"/>
+  <circle cx="13" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="20" cy="8" r="1.2" fill="currentColor" stroke="none"/><circle cx="44" cy="8" r="1.2" fill="currentColor" stroke="none"/><circle cx="51" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+</svg>

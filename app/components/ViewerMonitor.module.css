@@ -1,0 +1,23 @@
+.viewer { position: relative; display: grid; height: 100%; min-width: 0; min-height: 0; grid-template-rows: 32px minmax(0, 1fr) 24px 34px; background: #fff; overflow: hidden; }
+.viewer + .viewer { border-left: 1px solid #dededb; }
+.viewer header { display: grid; padding: 0 10px; grid-template-columns: 1fr auto; align-items: center; background: #fff; color: #5d5d58; font-size: 10px; font-weight: 600; }
+.mediaFrame { min-width: 0; min-height: 0; }
+.stage { display: grid; width: 100%; height: 100%; min-width: 0; min-height: 0; padding: 12px; place-items: center; overflow: hidden; }
+.frame { position: relative; display: grid; width: min(100%, 860px); max-height: 100%; aspect-ratio: 16 / 9; border-radius: 8px; background: #f1f1f1; overflow: hidden; place-items: center; }
+.frame[data-orientation="vertical"] { width: auto; height: min(100%, 560px); max-width: 100%; aspect-ratio: 9 / 16; }
+.frame[data-orientation="square"] { width: auto; height: min(100%, 520px); max-width: 100%; aspect-ratio: 1; }
+.video, .image { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; }
+.placeholder { display: grid; height: 100%; padding: 20px; color: #777771; font-size: 10px; place-items: center; align-content: center; gap: 9px; }
+.viewer footer, .viewer nav { display: flex; align-items: center; }
+.viewer footer { padding: 0 8px; justify-content: space-between; background: #fff; color: #74746e; font-size: 9px; }
+.progress { display: grid; padding: 0 10px; grid-template-columns: 58px minmax(40px, 1fr) 58px; align-items: center; gap: 8px; color: #8a8a84; }
+.progress time { font-size: 8px; font-variant-numeric: tabular-nums; text-align: left; }
+.progress time:last-child { text-align: right; }
+.progress input { width: 100%; height: 12px; margin: 0; accent-color: #718679; cursor: pointer; }
+.progress input:disabled { opacity: .35; cursor: default; }
+.viewer nav { gap: 1px; }
+.volumeControl { display: flex; align-items: center; }
+.volumeControl input { width: 54px; height: 12px; margin: 0 4px 0 1px; accent-color: #718679; }
+.viewer button { display: grid; width: 25px; height: 25px; padding: 0; place-items: center; border: 0; border-radius: 5px; background: transparent; color: #54544f; cursor: pointer; }
+.viewer button:hover { background: #ededeb; }
+.viewer button:disabled { cursor: default; opacity: .38; }
