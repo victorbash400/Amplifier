@@ -22,5 +22,5 @@ export function ProjectWorkspace({ assetsOpen, creatorOpen, project, folders, fi
   const [selectedFileId, setSelectedFileId] = useState<string>();
   const selectedFile = files.find((file) => file.id === selectedFileId);
   const layout = assetsOpen ? creatorOpen ? "both" : "assets" : creatorOpen ? "creator" : "none";
-  return <section className={styles.workspace} data-panel-layout={layout}>{assetsOpen && <FileSidebar files={files} folders={folders} onFilesChange={onFilesChange} onFoldersChange={onFoldersChange} onOpenFile={(file) => setSelectedFileId(file.id)} project={project} />}<WorkspaceCanvas project={project} selectedFile={selectedFile} />{creatorOpen && <CreatorPanel />}<TimelinePanel /></section>;
+  return <section className={styles.workspace} data-panel-layout={layout}>{assetsOpen && <FileSidebar files={files} folders={folders} onFilesChange={onFilesChange} onFoldersChange={onFoldersChange} onOpenFile={(file) => setSelectedFileId(file.id)} project={project} />}<WorkspaceCanvas project={project} selectedFile={selectedFile} />{creatorOpen && <CreatorPanel projectId={project.id} />}<TimelinePanel /></section>;
 }

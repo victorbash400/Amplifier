@@ -1,0 +1,8 @@
+.markdown { min-width: 0; font-size: 12px; line-height: 1.55; }
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown p, .markdown ul, .markdown ol, .markdown pre { margin: 0 0 8px; }
+.markdown ul, .markdown ol { padding-left: 18px; }
+.markdown code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
+.markdown pre { padding: 9px; border-radius: 7px; background: #f3f3f1; overflow-x: auto; }
+.markdown a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }

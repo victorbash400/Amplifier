@@ -1,0 +1,15 @@
+.backdrop { position: absolute; inset: 0; z-index: 7; border: 0; background: transparent; cursor: default; }
+.drawer { position: absolute; inset: 0 auto 0 0; z-index: 8; display: grid; width: min(84%, 270px); padding: 10px; grid-template-rows: 30px auto; border-right: 1px solid #e4e4e1; background: #fff; animation: drawer-in 170ms cubic-bezier(.2, .75, .25, 1); }
+.drawer header { display: flex; justify-content: flex-end; }
+.drawer button, .drawer a { display: flex; min-width: 0; height: 34px; padding: 0 8px; align-items: center; gap: 9px; border: 0; border-radius: 7px; background: transparent; color: #4f4f4b; font: inherit; font-size: 11px; text-decoration: none; cursor: pointer; }
+.drawer button:hover, .drawer a:hover { background: #ecece9; color: #191918; }
+.drawer nav { display: grid; padding: 5px 0 12px; align-content: start; gap: 2px; }
+
+@keyframes drawer-in {
+  from { opacity: .4; transform: translateX(-14px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer { animation: none; }
+}

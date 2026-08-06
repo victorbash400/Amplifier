@@ -1,0 +1,4 @@
+.indicator { position: relative; width: fit-content; color: #71716d; font-size: 10px; font-weight: 560; overflow: hidden; }
+.indicator::after { position: absolute; inset: 0 auto 0 -55%; width: 48%; background: linear-gradient(100deg, transparent, rgba(255, 255, 255, .98), transparent); content: ""; animation: thinking-shimmer 1.25s ease-in-out infinite; }
+@keyframes thinking-shimmer { to { transform: translateX(330%); } }
+@media (prefers-reduced-motion: reduce) { .indicator::after { animation: none; } }
