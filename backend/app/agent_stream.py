@@ -1,25 +1,28 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from typing import AsyncIterator
+from uuid import uuid4
 
 from google.adk.events import Event, EventActions
 from google.adk.agents import RunConfig
 from google.adk.agents.run_config import StreamingMode
 from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
+from google.adk.sessions import DatabaseSessionService
 from google import genai
 from google.genai import types
 
-from app.agents import ashi_app
+from app.agents import agent_apps
 from app.config import settings
 
 
-sessions = InMemorySessionService()
-runner = Runner(app=ashi_app, session_service=sessions)
+sessions = DatabaseSessionService(settings.agent_session_database_url)
+runners = {agent_id: Runner(app=app, session_service=sessions) for agent_id, app in agent_apps.items()}
 
 
-async def ensure_session(user_id: str, session_id: str) -> None:
+async def ensure_session(user_id: str, session_id: str, agent_id: str = "general") -> None:
+    runner = runner_for(agent_id)
     session = await sessions.get_session(
         app_name=runner.app_name,
         user_id=user_id,
@@ -31,11 +34,36 @@ async def ensure_session(user_id: str, session_id: str) -> None:
         app_name=runner.app_name,
         user_id=user_id,
         session_id=session_id,
+        state={"active_agent_id": agent_id},
     )
 
 
-async def stream_agent_events(*, user_id: str, session_id: str, message: str) -> AsyncIterator[str]:
+async def branch_session(*, user_id: str, source_session_id: str, target_session_id: str, agent_id: str) -> None:
+    runner = runner_for(agent_id)
+    source = await sessions.get_session(
+        app_name=runner.app_name,
+        user_id=user_id,
+        session_id=source_session_id,
+    )
+    if not source:
+        raise ValueError("The source chat does not exist in ADK session storage.")
+    state = deepcopy(source.state)
+    state["active_agent_id"] = agent_id
+    target = await sessions.create_session(
+        app_name=runner.app_name,
+        user_id=user_id,
+        session_id=target_session_id,
+        state=state,
+    )
+    for source_event in source.events:
+        event = source_event.model_copy(deep=True)
+        event.id = str(uuid4())
+        await sessions.append_event(target, event)
+
+
+async def stream_agent_events(*, user_id: str, session_id: str, message: str, agent_id: str = "general") -> AsyncIterator[str]:
     try:
+        runner = runner_for(agent_id)
         session = await sessions.get_session(
             app_name=runner.app_name,
             user_id=user_id,
@@ -112,6 +140,13 @@ async def stream_agent_events(*, user_id: str, session_id: str, message: str) ->
 
 def sse(event: dict[str, object]) -> str:
     return f"data: {json.dumps(event, default=str)}\n\n"
+
+
+def runner_for(agent_id: str) -> Runner:
+    try:
+        return runners[agent_id]
+    except KeyError as error:
+        raise ValueError(f"Unknown agent: {agent_id}") from error
 
 
 async def chat_title(user_message: str, assistant_message: str) -> str:

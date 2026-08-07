@@ -1,3 +1,5 @@
-from app.agents.ashi_agent import ashi_app
+from app.agents.media_agents import build_agent_apps
 
-__all__ = ["ashi_app"]
+agent_apps = build_agent_apps()
+
+__all__ = ["agent_apps"]

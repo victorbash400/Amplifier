@@ -1,5 +1,7 @@
 .panel { grid-area: creator; display: grid; min-width: 0; min-height: 0; margin: 0; padding: 12px; grid-template-rows: auto minmax(0, 1fr) auto; border: 1px solid #e8e8e8; border-radius: 14px; background: #fff; overflow: hidden; position: relative; }
+.panel[hidden] { display: none; }
 .chatHeader { display: flex; min-height: 30px; padding: 0 2px 5px; align-items: center; gap: 7px; }
 .chatHeader button { display: grid; width: 27px; height: 27px; padding: 0; border: 0; background: transparent; color: #676762; cursor: pointer; place-items: center; }
 .chatHeader button:hover { color: #171717; }
+.chatHeader strong { overflow: hidden; color: #454542; font-size: 10px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .error { margin: 0 3px 8px; color: #9d3028; font-size: 10px; }

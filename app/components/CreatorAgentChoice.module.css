@@ -1,0 +1,58 @@
+.choice {
+  position: relative;
+  width: min(292px, calc(100% - 18px));
+  margin: 0 auto 10px;
+  padding: 14px 10px 10px;
+  border: 1px solid #dededb;
+  border-radius: 20px;
+  background: #f3f3f1;
+  box-shadow: 0 12px 30px rgb(24 24 22 / 11%);
+  color: #30302e;
+}
+
+.choice .close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+  grid-template-columns: 1fr;
+  place-items: center;
+  border-radius: 50%;
+  color: #777773;
+}
+
+.choice .close svg { width: 15px; height: 15px; }
+
+.choice > p {
+  margin: 0;
+  padding: 0 38px 7px 10px;
+  color: #8a8a86;
+  font-size: 11px;
+}
+
+.choice button {
+  display: grid;
+  width: 100%;
+  min-height: 42px;
+  padding: 0 10px;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #343432;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.choice button:hover:not(:disabled) { background: rgb(0 0 0 / 5%); }
+.choice button:focus-visible { outline: 2px solid #777; outline-offset: -2px; }
+.choice button:disabled { cursor: default; opacity: .42; }
+.choice button svg { width: 19px; height: 19px; stroke-width: 1.7; }
+.choice button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

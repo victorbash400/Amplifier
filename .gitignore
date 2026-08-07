@@ -9,6 +9,7 @@ out/
 **/venv/
 __pycache__/
 *.py[cod]
+*.db
 
 # Environment
 **/.env

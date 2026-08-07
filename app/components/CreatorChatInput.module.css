@@ -1,6 +1,93 @@
-.input { display: grid; padding: 9px; grid-template-columns: 30px minmax(0, 1fr) 34px; align-items: end; gap: 7px; border: 1px solid #dedede; border-radius: 18px; background: #fff; box-shadow: 0 8px 22px rgba(30, 30, 28, 0.05); }
-.input textarea { grid-column: 1 / -1; min-width: 0; max-height: 180px; padding: 5px 3px 8px; resize: none; overflow: hidden; border: 0; background: transparent; color: #252522; font: inherit; font-size: 12px; line-height: 1.45; outline: 0; }
-.input textarea::placeholder { color: #999; }
-.input > button { display: grid; width: 30px; height: 30px; padding: 0; place-items: center; border: 0; border-radius: 50%; background: transparent; color: #666; cursor: pointer; }
-.input > button:last-child { grid-column: 3; width: 34px; height: 34px; background: #222; color: #fff; }
-.input > button:disabled { opacity: 0.25; cursor: default; }
+.form {
+  width: 100%;
+  margin: 0 auto;
+  filter: drop-shadow(0 8px 18px rgb(0 0 0 / 8%));
+}
+
+.context {
+  display: flex;
+  width: calc(100% - 24px);
+  height: 42px;
+  margin: 0 auto;
+  align-items: center;
+  gap: 9px;
+  padding: 0 17px 5px;
+  border-radius: 19px 19px 0 0;
+  background: #f0f0ef;
+  overflow-x: auto;
+  color: #676764;
+  font-size: 11px;
+  scrollbar-color: rgb(110 110 110 / 36%) transparent;
+  scrollbar-width: thin;
+}
+
+.context::-webkit-scrollbar { height: 4px; }
+.context::-webkit-scrollbar-track { background: transparent; }
+.context::-webkit-scrollbar-thumb { border-radius: 999px; background: rgb(110 110 110 / 36%); }
+.context > strong,
+.context > span { flex: 0 0 auto; white-space: nowrap; }
+.context > strong { color: #343434; font-weight: 650; }
+.context > span:first-of-type { font-weight: 520; }
+
+.composer {
+  position: relative;
+  margin-top: -4px;
+  padding: 15px 13px 10px;
+  border: 1px solid #dededc;
+  border-radius: 17px;
+  background: rgb(255 255 255 / 96%);
+}
+
+.composer:focus-within {
+  border-color: #c8c8c5;
+  box-shadow: 0 0 0 3px rgb(42 42 42 / 4.5%);
+}
+
+.composer textarea {
+  display: block;
+  width: 100%;
+  min-height: 48px;
+  max-height: 160px;
+  overflow-y: auto;
+  resize: none;
+  border: 0;
+  background: transparent;
+  color: #292929;
+  outline: 0;
+  font: inherit;
+  line-height: 1.5;
+}
+
+.composer textarea::placeholder { color: #bcbcbc; }
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  justify-content: space-between;
+}
+
+.toolbar button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #666;
+  cursor: pointer;
+}
+
+.toolbar button:last-child {
+  width: 34px;
+  height: 34px;
+  background: #222;
+  color: #fff;
+}
+
+.toolbar button:disabled {
+  opacity: 0.25;
+  cursor: default;
+}

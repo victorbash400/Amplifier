@@ -1,8 +1,9 @@
 import type { CreatorChat } from "../components/creatorChatTypes";
+import type { CreatorAgentId } from "../components/creatorAgentTypes";
 
 const storageKey = "amplifier-creator-chats";
 
-export function createCreatorChat(projectId: string): CreatorChat {
+export function createCreatorChat(projectId: string, agentId: CreatorAgentId = "general", contextNames: string[] = []): CreatorChat {
   const now = Date.now();
   return {
     id: crypto.randomUUID(),
@@ -11,6 +12,8 @@ export function createCreatorChat(projectId: string): CreatorChat {
     messages: [],
     createdAt: now,
     updatedAt: now,
+    agentId,
+    contextNames,
   };
 }
 

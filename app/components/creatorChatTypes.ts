@@ -24,4 +24,6 @@ export type CreatorChat = {
   messages: CreatorMessage[];
   createdAt: number;
   updatedAt: number;
+  agentId?: import("./creatorAgentTypes").CreatorAgentId;
+  contextNames?: string[];
 };

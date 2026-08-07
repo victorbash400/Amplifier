@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.agent_stream import ensure_session, stream_agent_events
+from app.agent_stream import branch_session, ensure_session, stream_agent_events
 from app.asset_storage import create_upload_session, delete_asset, open_asset_stream, verify_uploaded_asset
 from app.clickhouse import check_clickhouse
 
@@ -16,6 +16,14 @@ class ChatRequest(BaseModel):
     user_id: str = Field(default="local-user", min_length=1)
     session_id: str = Field(min_length=1)
     message: str = Field(min_length=1)
+    agent_id: str = Field(default="general", pattern=r"^(general|edit|vision|hearing|deafblind|cognitive|vision-cognitive|hearing-cognitive|deafblind-cognitive|sensory)$")
+
+
+class BranchChatRequest(BaseModel):
+    user_id: str = Field(default="local-user", min_length=1)
+    source_session_id: str = Field(min_length=1)
+    target_session_id: str = Field(min_length=1)
+    agent_id: str = Field(default="general", pattern=r"^(general|edit|vision|hearing|deafblind|cognitive|vision-cognitive|hearing-cognitive|deafblind-cognitive|sensory)$")
 
 
 class AssetUploadRequest(BaseModel):
@@ -118,13 +126,28 @@ async def remove_asset(body: AssetDeleteRequest) -> None:
 
 @app.post("/agent/chat")
 async def agent_chat(body: ChatRequest) -> StreamingResponse:
-    await ensure_session(body.user_id, body.session_id)
+    await ensure_session(body.user_id, body.session_id, body.agent_id)
     return StreamingResponse(
         stream_agent_events(
             user_id=body.user_id,
             session_id=body.session_id,
             message=body.message.strip(),
+            agent_id=body.agent_id,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache"},
     )
+
+
+@app.post("/agent/sessions/branch", status_code=201)
+async def branch_agent_chat(body: BranchChatRequest) -> dict[str, str]:
+    try:
+        await branch_session(
+            user_id=body.user_id,
+            source_session_id=body.source_session_id,
+            target_session_id=body.target_session_id,
+            agent_id=body.agent_id,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return {"session_id": body.target_session_id}

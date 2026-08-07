@@ -2,20 +2,22 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, DragEvent, PointerEvent } from "react";
-import { ChevronsLeft, Magnet, Maximize2, MousePointer2, Pause, Play, Redo2, Scissors, Trash2, Undo2, ZoomIn, ZoomOut } from "lucide-react";
+import { ChevronsLeft, Magnet, Maximize2, MousePointer2, Pause, Play, Redo2, Scissors, SquarePen, Trash2, Undo2, ZoomIn, ZoomOut } from "lucide-react";
 import type { ProjectFile } from "../types/workspace";
 import { useTimelineShortcuts } from "../hooks/useTimelineShortcuts";
 import { collisionFreeStart } from "../lib/timelineLayout";
 import { assetUrl, readMediaDuration } from "../lib/assetUploads";
 import { deleteTimelineClip, moveTimelineClip, snapTimelineTime, splitTimelineClip, trimTimelineClip } from "../lib/timelineOperations";
 import { TimelineClipItem, type TimelineClipHandlers } from "./TimelineClipItem";
-import { TimelineModeSwitcher } from "./TimelineModeSwitcher";
+import { TimelineModeSwitcher, type TimelineMode } from "./TimelineModeSwitcher";
+import { TimelineAccessibilityTools } from "./TimelineAccessibilityTools";
 import { TimelineHorizontalScrollbar } from "./TimelineHorizontalScrollbar";
 import { TimelineRuler, formatTimecode } from "./TimelineRuler";
 import { TimelineTrackHeaders } from "./TimelineTrackHeaders";
 import { buildTimelineTracks, firstEmptyTrackLane, type TimelineTrack, type TimelineTrackCounts } from "./timelineTracks";
 import type { TimelineClip } from "./timelineTypes";
 import styles from "./TimelinePanel.module.css";
+import type { CreatorAgentId } from "./creatorAgentTypes";
 
 const baseDuration = 20;
 const trailingRoom = 8;
@@ -25,6 +27,7 @@ type TimelinePanelProps = {
   error?: string;
   files: ProjectFile[];
   onClipsChange: (clips: TimelineClip[]) => void;
+  onAskAgent: (agentId: CreatorAgentId, contextNames: string[]) => void;
   onFilesChange: (files: ProjectFile[]) => void;
   onPlayingChange: (playing: boolean) => void;
   onTimeChange: (time: number) => void;
@@ -34,7 +37,7 @@ type TimelinePanelProps = {
   trackCounts: TimelineTrackCounts;
 };
 
-export function TimelinePanel({ clips, error, files, onClipsChange, onFilesChange, onPlayingChange, onTimeChange, onTrackCountsChange, playing, time, trackCounts }: TimelinePanelProps) {
+export function TimelinePanel({ clips, error, files, onAskAgent, onClipsChange, onFilesChange, onPlayingChange, onTimeChange, onTrackCountsChange, playing, time, trackCounts }: TimelinePanelProps) {
   const canvasRef = useRef<HTMLElement>(null);
   const viewportRef = useRef<HTMLElement>(null);
   const dragOffset = useRef(0);
@@ -52,9 +55,16 @@ export function TimelinePanel({ clips, error, files, onClipsChange, onFilesChang
   const [dropActive, setDropActive] = useState(false);
   const [editingTracks, setEditingTracks] = useState<TimelineTrack[]>();
   const [divider, setDivider] = useState(50);
+  const [mode, setMode] = useState<TimelineMode>("edit");
   const timelineDuration = Math.max(baseDuration, ...clips.map((clip) => clip.start + clip.duration + trailingRoom));
   const contentDuration = Math.max(0, ...clips.map((clip) => clip.start + clip.duration));
   const tracks = editingTracks ?? buildTimelineTracks(clips, dropActive, clips, trackCounts);
+  const selectedClip = clips.find((clip) => clip.id === selectedId);
+  const selectedGroup = selectedClip?.linkId ? clips.filter((clip) => clip.linkId === selectedClip.linkId) : selectedClip ? [selectedClip] : [];
+  const selectedHasVisual = selectedGroup.some((clip) => clip.role === "visual");
+  const selectedHasAudio = selectedGroup.some((clip) => clip.role === "audio");
+  const modeClipSelected = mode === "vision" || mode === "vision-cognitive" ? selectedHasVisual : mode === "hearing" || mode === "hearing-cognitive" ? selectedHasAudio : Boolean(selectedClip);
+  const modeLabel = mode === "vision-cognitive" ? "Vision + Cognitive" : mode === "hearing-cognitive" ? "Hearing + Cognitive" : mode === "deafblind-cognitive" ? "Deafblind + Cognitive" : `${mode.charAt(0).toUpperCase()}${mode.slice(1)}`;
 
   useEffect(() => {
     const missing = files.filter((file) => !file.pending && (file.type.startsWith("video/") || file.type.startsWith("audio/")) && !(file.duration && file.duration > 0) && !metadataRequests.current.has(file.id));
@@ -261,10 +271,11 @@ export function TimelinePanel({ clips, error, files, onClipsChange, onFilesChang
 
   return (
     <section className={styles.timeline} aria-label="Timeline">
-      <header>
+      <header data-mode={mode}>
         <section className={styles.toolGroup}>
-          <strong>Timeline</strong>
-          <nav aria-label="Timeline edit tools">
+          <strong>{modeLabel}</strong>
+          <button aria-label={`Ask ${modeLabel} Agent`} className={styles.askAgent} onClick={() => onAskAgent(mode, selectedClip ? [selectedClip.asset.name] : [])} title={`Ask ${modeLabel} Agent`} type="button"><SquarePen size={15} /></button>
+          {mode !== "edit" ? <TimelineAccessibilityTools clipSelected={modeClipSelected} mode={mode} /> : <nav aria-label="Timeline edit tools">
             <button aria-label="Select" type="button"><MousePointer2 size={15} /></button>
             <button aria-keyshortcuts="Meta+Z Control+Z" aria-label="Undo" disabled={!undoCount} onClick={undo} type="button"><Undo2 size={15} /></button>
             <button aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z" aria-label="Redo" disabled={!redoCount} onClick={redo} type="button"><Redo2 size={15} /></button>
@@ -272,7 +283,7 @@ export function TimelinePanel({ clips, error, files, onClipsChange, onFilesChang
             <button aria-keyshortcuts="Delete Backspace" aria-label="Delete selected clip" disabled={!selectedId} onClick={() => deleteSelected()} type="button"><Trash2 size={15} /></button>
             <button aria-keyshortcuts="Shift+Delete Shift+Backspace" aria-label="Ripple delete selected clip" disabled={!selectedId} onClick={() => deleteSelected(true)} type="button"><ChevronsLeft size={15} /></button>
             <button aria-keyshortcuts="N" aria-label={`${snapping ? "Disable" : "Enable"} snapping`} aria-pressed={snapping} onClick={() => setSnapping((value) => !value)} type="button"><Magnet size={15} /></button>
-          </nav>
+          </nav>}
         </section>
         <section className={styles.playback}><button aria-keyshortcuts="Space" aria-label={playing ? "Pause" : "Play"} onClick={() => onPlayingChange(!playing)} type="button">{playing ? <Pause size={16} /> : <Play size={16} />}</button><time>{formatTimecode(time)}</time></section>
         <section className={styles.toolGroup} data-end><nav aria-label="Timeline view"><button aria-keyshortcuts="-" aria-label="Zoom out" disabled={scale <= 1} onClick={() => setScale((value) => Math.max(1, value - 1))} type="button"><ZoomOut size={15} /></button><button aria-keyshortcuts="0" aria-label="Fit timeline" onClick={fitTimeline} type="button"><Maximize2 size={15} /></button><button aria-keyshortcuts="+" aria-label="Zoom in" disabled={scale >= 8} onClick={() => setScale((value) => Math.min(8, value + 1))} type="button"><ZoomIn size={15} /></button></nav></section>
@@ -296,7 +307,7 @@ export function TimelinePanel({ clips, error, files, onClipsChange, onFilesChang
         </section>
         <TimelineHorizontalScrollbar scale={scale} viewportRef={viewportRef} />
       </section>
-      <TimelineModeSwitcher />
+      <TimelineModeSwitcher onChange={setMode} selected={mode} />
     </section>
   );
 }

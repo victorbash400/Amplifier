@@ -1,6 +1,8 @@
 fastapi
 clickhouse-connect
-google-adk
+google-adk[db]
+aiosqlite
+greenlet
 google-genai
 google-cloud-storage
 mcp-clickhouse
