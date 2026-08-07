@@ -23,6 +23,7 @@ type ProjectWorkspaceProps = {
 
 export function ProjectWorkspace({ assetsOpen, creatorOpen, project, folders, files, onFoldersChange, onFilesChange, onOpenCreator }: ProjectWorkspaceProps) {
   const [selectedFileId, setSelectedFileId] = useState<string>();
+  const [selectedFileStart, setSelectedFileStart] = useState(0);
   const [timelineTime, setTimelineTime] = useState(0);
   const [timelinePlaying, setTimelinePlaying] = useState(false);
   const creatorRef = useRef<CreatorPanelHandle>(null);
@@ -37,5 +38,9 @@ export function ProjectWorkspace({ assetsOpen, creatorOpen, project, folders, fi
     creatorRef.current?.requestAgent(request);
     onOpenCreator();
   }
-  return <section className={styles.workspace} data-panel-layout={layout}>{assetsOpen && <FileSidebar files={files} folders={folders} onFilesChange={onFilesChange} onFoldersChange={onFoldersChange} onOpenFile={(file) => setSelectedFileId(file.id)} project={project} />}<PreviewPanel selectedFile={selectedFile} timeline={timelinePreview} /><CreatorPanel hidden={!creatorOpen} projectId={project.id} ref={creatorRef} /><TimelinePanel clips={timeline.clips} error={timeline.error} files={files} onAskAgent={askAgent} onClipsChange={timeline.updateClips} onFilesChange={onFilesChange} onPlayingChange={setTimelinePlaying} onTimeChange={setTimelineTime} onTrackCountsChange={timeline.updateTrackCounts} playing={timelinePlaying} time={timelineTime} trackCounts={timeline.trackCounts} /></section>;
+  function openFile(file: ProjectFile, start = 0) {
+    setSelectedFileId(file.id);
+    setSelectedFileStart(start);
+  }
+  return <section className={styles.workspace} data-panel-layout={layout}>{assetsOpen && <FileSidebar files={files} folders={folders} onFilesChange={onFilesChange} onFoldersChange={onFoldersChange} onOpenFile={openFile} project={project} />}<PreviewPanel selectedFile={selectedFile} selectedFileStart={selectedFileStart} timeline={timelinePreview} /><CreatorPanel hidden={!creatorOpen} projectId={project.id} ref={creatorRef} /><TimelinePanel clips={timeline.clips} error={timeline.error} files={files} onAskAgent={askAgent} onClipsChange={timeline.updateClips} onFilesChange={onFilesChange} onPlayingChange={setTimelinePlaying} onTimeChange={setTimelineTime} onTrackCountsChange={timeline.updateTrackCounts} playing={timelinePlaying} time={timelineTime} trackCounts={timeline.trackCounts} /></section>;
 }

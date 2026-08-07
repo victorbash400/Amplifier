@@ -33,9 +33,9 @@ export async function PATCH(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const body = await request.json() as { projectId?: string; objectKey?: string };
-  if (!body.projectId || !body.objectKey) return Response.json({ error: "Project and object key are required" }, { status: 400 });
-  return proxy("/assets", { project_id: body.projectId, object_key: body.objectKey }, "DELETE");
+  const body = await request.json() as { projectId?: string; assetId?: string; objectKey?: string };
+  if (!body.projectId || !body.assetId || !body.objectKey) return Response.json({ error: "Project, asset, and object key are required" }, { status: 400 });
+  return proxy("/assets", { project_id: body.projectId, asset_id: body.assetId, object_key: body.objectKey }, "DELETE");
 }
 
 function validUpload(body: UploadBody): body is Required<UploadBody> {

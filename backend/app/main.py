@@ -1,4 +1,6 @@
 import asyncio
+import json
+import logging
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
@@ -7,9 +9,11 @@ from pydantic import BaseModel, Field
 from app.agent_stream import branch_session, ensure_session, stream_agent_events
 from app.asset_storage import create_upload_session, delete_asset, open_asset_stream, verify_uploaded_asset
 from app.clickhouse import check_clickhouse
+from app.media_search import index_asset, index_status, remove_asset_index, search_assets
 
 
 app = FastAPI(title="Amplifier API")
+logger = logging.getLogger(__name__)
 
 
 class ChatRequest(BaseModel):
@@ -44,7 +48,24 @@ class AssetUploadCompleteRequest(BaseModel):
 
 class AssetDeleteRequest(BaseModel):
     project_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    asset_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
     object_key: str = Field(min_length=1, max_length=1024)
+
+
+class MediaIndexRequest(BaseModel):
+    project_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    asset_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    object_key: str = Field(min_length=1, max_length=1024)
+    name: str = Field(min_length=1, max_length=255)
+    content_type: str = Field(min_length=1, max_length=255)
+    folder_id: str = Field(default="root", min_length=1, max_length=100)
+    duration: float | None = Field(default=None, ge=0)
+    force: bool = False
+
+
+class MediaSearchRequest(BaseModel):
+    project_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    query: str = Field(min_length=2, max_length=240)
 
 
 @app.get("/health")
@@ -119,7 +140,69 @@ async def asset_media(project_id: str, object_key: str, range: str | None = None
 @app.delete("/assets")
 async def remove_asset(body: AssetDeleteRequest) -> None:
     try:
+        await remove_asset_index(project_id=body.project_id, asset_id=body.asset_id)
         await asyncio.to_thread(delete_asset, project_id=body.project_id, object_key=body.object_key)
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@app.get("/search/index")
+async def media_index_status(project_id: str) -> dict[str, object]:
+    try:
+        return {"assets": await index_status(project_id)}
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@app.post("/search/index")
+async def create_media_index(body: MediaIndexRequest) -> StreamingResponse:
+    async def events():
+        queue: asyncio.Queue[dict[str, object] | None] = asyncio.Queue()
+
+        async def progress(event: dict[str, object]) -> None:
+            await queue.put(event)
+
+        async def run() -> None:
+            try:
+                result = await index_asset(
+                    project_id=body.project_id,
+                    asset_id=body.asset_id,
+                    object_key=body.object_key,
+                    name=body.name,
+                    content_type=body.content_type,
+                    folder_id=body.folder_id,
+                    duration=body.duration,
+                    force=body.force,
+                    on_progress=progress,
+                )
+                if result.get("reused"):
+                    await queue.put(result)
+            except Exception as error:
+                logger.exception("Media indexing failed for asset %s in project %s", body.asset_id, body.project_id)
+                await queue.put({"asset_id": body.asset_id, "status": "failed", "stage": "Failed", "error": str(error)})
+            finally:
+                await queue.put(None)
+
+        task = asyncio.create_task(run())
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                yield json.dumps(event, separators=(",", ":")) + "\n"
+        finally:
+            if not task.done():
+                task.cancel()
+
+    return StreamingResponse(events(), media_type="application/x-ndjson", headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
+@app.post("/search/query")
+async def query_media_index(body: MediaSearchRequest) -> dict[str, object]:
+    try:
+        return {"results": await search_assets(body.project_id, body.query)}
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
 

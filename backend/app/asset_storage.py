@@ -70,7 +70,7 @@ def asset_object_key(project_id: str, asset_id: str, file_name: str) -> str:
 
 
 def open_asset_stream(*, project_id: str, object_key: str, range_header: str | None) -> AssetStream:
-    if not object_key.startswith(f"projects/{project_id}/assets/"):
+    if not object_key.startswith((f"projects/{project_id}/assets/", f"projects/{project_id}/search/")):
         raise ValueError("Asset does not belong to this project")
     blob = storage.Client(project=settings.google_cloud_project).bucket(settings.gcs_bucket).blob(object_key)
     blob.reload()

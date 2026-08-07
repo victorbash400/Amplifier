@@ -8,11 +8,11 @@ import { ViewerMediaFrame } from "./ViewerMediaFrame";
 import { ViewerVolumeControl } from "./ViewerVolumeControl";
 import styles from "./ViewerMonitor.module.css";
 
-export function ViewerMonitor({ asset, timeline, title }: { asset?: ProjectFile; timeline?: TimelinePreviewState; title: "Preview" | "Timeline" }) {
+export function ViewerMonitor({ asset, sourceStart = 0, timeline, title }: { asset?: ProjectFile; sourceStart?: number; timeline?: TimelinePreviewState; title: "Preview" | "Timeline" }) {
   const mediaRef = useRef<HTMLMediaElement>(null);
   const frameRef = useRef<HTMLElement>(null);
   const [previewPlaying, setPreviewPlaying] = useState(false);
-  const [previewTime, setPreviewTime] = useState(0);
+  const [previewTime, setPreviewTime] = useState(sourceStart);
   const [previewDuration, setPreviewDuration] = useState(asset?.duration ?? 0);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
@@ -29,11 +29,16 @@ export function ViewerMonitor({ asset, timeline, title }: { asset?: ProjectFile;
     const media = mediaRef.current;
     if (!media || timeline) return;
     const updateTime = () => setPreviewTime(media.currentTime);
-    const updateDuration = () => setPreviewDuration(Number.isFinite(media.duration) ? media.duration : 0);
+    const updateDuration = () => {
+      const duration = Number.isFinite(media.duration) ? media.duration : 0;
+      setPreviewDuration(duration);
+      media.currentTime = Math.min(sourceStart, duration || sourceStart);
+      setPreviewTime(media.currentTime);
+    };
     media.addEventListener("timeupdate", updateTime);
     media.addEventListener("loadedmetadata", updateDuration);
     return () => { media.removeEventListener("timeupdate", updateTime); media.removeEventListener("loadedmetadata", updateDuration); };
-  }, [asset, timeline]);
+  }, [asset, sourceStart, timeline]);
 
   const playing = timeline?.playing || previewPlaying;
   const currentTime = timeline?.timelineTime ?? previewTime;

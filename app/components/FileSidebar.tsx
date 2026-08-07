@@ -3,10 +3,13 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Plus, Search, Upload } from "lucide-react";
 import { uploadProjectAsset } from "../lib/assetUploads";
+import { useMediaSearch } from "../hooks/useMediaSearch";
 import type { AmplifierProject, ProjectFile, ProjectFolder } from "../types/workspace";
 import { FileRow } from "./FileRow";
 import { FolderRow } from "./FolderRow";
 import { FolderIcon, folderColors } from "./icons/FolderIcon";
+import { MediaSearchPanel } from "./MediaSearchPanel";
+import { MediaSearchToggle } from "./MediaSearchToggle";
 import styles from "./FileSidebar.module.css";
 
 type FileSidebarProps = {
@@ -15,16 +18,19 @@ type FileSidebarProps = {
   files: ProjectFile[];
   onFoldersChange: (folders: ProjectFolder[]) => void;
   onFilesChange: (files: ProjectFile[]) => void;
-  onOpenFile: (file: ProjectFile) => void;
+  onOpenFile: (file: ProjectFile, start?: number) => void;
 };
 
 export function FileSidebar({ project, folders, files, onFoldersChange, onFilesChange, onOpenFile }: FileSidebarProps) {
-  const [query, setQuery] = useState("");
+  const [fileQuery, setFileQuery] = useState("");
+  const [mediaQuery, setMediaQuery] = useState("");
+  const [mediaSearchActive, setMediaSearchActive] = useState(false);
   const [selectedId, setSelectedId] = useState("root");
   const [expanded, setExpanded] = useState(() => new Set(["root"]));
   const [uploadError, setUploadError] = useState<string>();
   const localUrls = useRef(new Set<string>());
-  const normalizedQuery = query.trim().toLowerCase();
+  const mediaSearch = useMediaSearch(project.id, files, mediaSearchActive, mediaQuery);
+  const normalizedQuery = fileQuery.trim().toLowerCase();
   const visibleFiles = useMemo(() => files.filter((file) => file.name.toLowerCase().includes(normalizedQuery)), [files, normalizedQuery]);
   const visibleFolders = useMemo(() => folders.filter((folder) => folder.name.toLowerCase().includes(normalizedQuery) || hasMatchingDescendant(folder.id, folders, visibleFiles)), [folders, normalizedQuery, visibleFiles]);
 
@@ -92,7 +98,7 @@ export function FileSidebar({ project, folders, files, onFoldersChange, onFilesC
     setUploadError(undefined);
     if (!file.objectKey) return;
     try {
-      const response = await fetch("/api/assets/uploads", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, objectKey: file.objectKey }) });
+      const response = await fetch("/api/assets/uploads", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, assetId: file.id, objectKey: file.objectKey }) });
       if (!response.ok) throw new Error((await response.json()).error || `Could not delete ${file.name}`);
       if (file.localUrl) {
         URL.revokeObjectURL(file.localUrl);
@@ -113,7 +119,7 @@ export function FileSidebar({ project, folders, files, onFoldersChange, onFilesC
   }
 
   const rootExpanded = expanded.has("root");
-  return <aside className={styles.sidebar} aria-label="Assets"><section className={styles.search}><Search size={14} /><input aria-label="Search assets" onChange={(event) => setQuery(event.target.value)} placeholder="Search" value={query} /></section><nav className={styles.actions} aria-label="Asset actions"><label aria-label="Upload files" title="Upload files"><Upload size={16} /><input multiple onChange={upload} type="file" /></label><button aria-label="New folder" onClick={() => createFolder()} title="New folder" type="button"><Plus size={16} /></button></nav>{uploadError && <p className={styles.uploadError} role="alert">{uploadError}</p>}<nav className={styles.tree} aria-label="Asset tree"><p className={styles.folderRow} data-selected={selectedId === "root"}><button aria-label={`${rootExpanded ? "Collapse" : "Expand"} ${project.name}`} className={styles.chevron} onClick={() => toggle("root")} type="button">{rootExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</button><button className={styles.folderName} onClick={() => setSelectedId("root")} type="button"><FolderIcon color={project.color} open={rootExpanded} /><strong>{project.name}</strong></button><button aria-label="New folder in project" className={styles.rowAction} onClick={() => createFolder("root")} type="button"><Plus size={15} /></button></p>{rootExpanded && visibleFiles.filter((file) => file.folderId === "root").map((file) => <FileRow file={file} key={file.id} onDelete={deleteFile} onOpen={onOpenFile} onRename={renameFile} />)}{rootExpanded && visibleFolders.filter((folder) => !folder.parentId).map((folder) => <FolderRow expanded={expanded} files={visibleFiles} folder={folder} folders={visibleFolders} key={folder.id} onCreateFolder={createFolder} onDeleteFile={deleteFile} onDeleteFolder={deleteFolder} onOpenFile={onOpenFile} onRenameFile={renameFile} onRenameFolder={renameFolder} onSelect={setSelectedId} onToggle={toggle} selectedId={selectedId} />)}</nav></aside>;
+  return <aside className={styles.sidebar} aria-label="Assets"><section className={styles.search}><Search size={14} /><input aria-label={mediaSearchActive ? "Search inside media" : "Search assets"} onChange={(event) => mediaSearchActive ? setMediaQuery(event.target.value) : setFileQuery(event.target.value)} placeholder={mediaSearchActive ? "Search inside media" : "Search"} value={mediaSearchActive ? mediaQuery : fileQuery} /><MediaSearchToggle active={mediaSearchActive} onToggle={() => setMediaSearchActive((current) => !current)} /></section>{!mediaSearchActive && <nav className={styles.actions} aria-label="Asset actions"><label aria-label="Upload files" title="Upload files"><Upload size={16} /><input multiple onChange={upload} type="file" /></label><button aria-label="New folder" onClick={() => createFolder()} title="New folder" type="button"><Plus size={16} /></button></nav>}{uploadError && <p className={styles.uploadError} role="alert">{uploadError}</p>}{mediaSearchActive ? <MediaSearchPanel error={mediaSearch.error} failed={mediaSearch.failed} files={files} indexing={mediaSearch.indexingCount} onOpen={onOpenFile} onRetry={mediaSearch.retry} onRetrySkipped={mediaSearch.retrySkipped} onSkipFailed={mediaSearch.skipFailed} query={mediaQuery} ready={mediaSearch.ready} results={mediaSearch.results} searching={mediaSearch.searching} skipped={mediaSearch.skippedCount} states={mediaSearch.states} total={mediaSearch.total} /> : <nav className={styles.tree} aria-label="Asset tree"><p className={styles.folderRow} data-selected={selectedId === "root"}><button aria-label={`${rootExpanded ? "Collapse" : "Expand"} ${project.name}`} className={styles.chevron} onClick={() => toggle("root")} type="button">{rootExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</button><button className={styles.folderName} onClick={() => setSelectedId("root")} type="button"><FolderIcon color={project.color} open={rootExpanded} /><strong>{project.name}</strong></button><button aria-label="New folder in project" className={styles.rowAction} onClick={() => createFolder("root")} type="button"><Plus size={15} /></button></p>{rootExpanded && visibleFiles.filter((file) => file.folderId === "root").map((file) => <FileRow file={file} key={file.id} onDelete={deleteFile} onOpen={onOpenFile} onRename={renameFile} />)}{rootExpanded && visibleFolders.filter((folder) => !folder.parentId).map((folder) => <FolderRow expanded={expanded} files={visibleFiles} folder={folder} folders={visibleFolders} key={folder.id} onCreateFolder={createFolder} onDeleteFile={deleteFile} onDeleteFolder={deleteFolder} onOpenFile={onOpenFile} onRenameFile={renameFile} onRenameFolder={renameFolder} onSelect={setSelectedId} onToggle={toggle} selectedId={selectedId} />)}</nav>}</aside>;
 }
 
 async function parallelMap<T, R>(items: T[], concurrency: number, task: (item: T) => Promise<R>) {
