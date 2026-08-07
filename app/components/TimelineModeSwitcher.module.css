@@ -1,4 +1,4 @@
-.switcher { display: flex; min-height: 48px; margin: 8px -9px -9px; padding: 0 clamp(16px, 8vw, 92px); align-items: stretch; justify-content: space-between; gap: 0; border-top: 1px solid #ededed; background: #fbfbfb; overflow-x: auto; }
+.switcher { display: flex; min-height: 48px; margin: 8px -9px -9px; padding: 0 16px; align-items: stretch; justify-content: center; gap: 14px; border-top: 1px solid #ededed; background: #fbfbfb; overflow-x: auto; }
 .mode { position: relative; display: grid; min-width: 72px; padding: 6px 5px 5px; grid-template-rows: 40px 12px; place-items: center; gap: 2px; border: 0; background: transparent; color: #8a8a86; cursor: pointer; }
 .mode::after { position: absolute; right: 5px; bottom: 0; left: 5px; height: 2px; border-radius: 2px 2px 0 0; background: transparent; content: ""; }
 .mode img { opacity: .62; }

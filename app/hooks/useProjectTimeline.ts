@@ -3,11 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ProjectFile } from "../types/workspace";
 import type { TimelineClip } from "../components/timelineTypes";
+import { normalizeTimelineTracks, type TimelineTrackCounts } from "../components/timelineTracks";
 
 export function useProjectTimeline(projectId: string, files: ProjectFile[]) {
   const [clips, setClips] = useState<TimelineClip[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string>();
+  const [trackCounts, setTrackCounts] = useState<TimelineTrackCounts>({ audio: 1, visual: 1 });
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -17,10 +19,17 @@ export function useProjectTimeline(projectId: string, files: ProjectFile[]) {
           const parsed = JSON.parse(stored) as Array<Omit<TimelineClip, "asset"> & { assetId: string }>;
           if (!Array.isArray(parsed)) throw new Error("The saved timeline is invalid");
           const byId = new Map(files.map((file) => [file.id, file]));
-          setClips(parsed.flatMap(({ assetId, ...clip }) => {
+          setClips(normalizeTimelineTracks(parsed.flatMap(({ assetId, ...clip }) => {
             const asset = byId.get(assetId);
-            return asset ? [{ ...clip, asset }] : [];
-          }));
+            if (!asset) return [];
+            const sourceDuration = asset.duration && (asset.type.startsWith("video/") || asset.type.startsWith("audio/")) ? asset.duration : clip.sourceDuration;
+            return [{ ...clip, asset, sourceDuration }];
+          })));
+        }
+        const storedTracks = localStorage.getItem(`amplifier-timeline-tracks-${projectId}`);
+        if (storedTracks) {
+          const parsedTracks = JSON.parse(storedTracks) as TimelineTrackCounts;
+          if (Number.isInteger(parsedTracks.audio) && parsedTracks.audio > 0 && Number.isInteger(parsedTracks.visual) && parsedTracks.visual > 0) setTrackCounts(parsedTracks);
         }
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : "Could not load timeline");
@@ -45,5 +54,10 @@ export function useProjectTimeline(projectId: string, files: ProjectFile[]) {
     });
   }, [projectId]);
 
-  return { clips, error, loaded, updateClips };
+  const updateTrackCounts = useCallback((next: TimelineTrackCounts) => {
+    localStorage.setItem(`amplifier-timeline-tracks-${projectId}`, JSON.stringify(next));
+    setTrackCounts(next);
+  }, [projectId]);
+
+  return { clips, error, loaded, trackCounts, updateClips, updateTrackCounts };
 }

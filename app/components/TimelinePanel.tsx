@@ -6,9 +6,14 @@ import { ChevronsLeft, Magnet, Maximize2, MousePointer2, Pause, Play, Redo2, Sci
 import type { ProjectFile } from "../types/workspace";
 import { useTimelineShortcuts } from "../hooks/useTimelineShortcuts";
 import { collisionFreeStart } from "../lib/timelineLayout";
+import { assetUrl, readMediaDuration } from "../lib/assetUploads";
 import { deleteTimelineClip, moveTimelineClip, snapTimelineTime, splitTimelineClip, trimTimelineClip } from "../lib/timelineOperations";
 import { TimelineClipItem, type TimelineClipHandlers } from "./TimelineClipItem";
 import { TimelineModeSwitcher } from "./TimelineModeSwitcher";
+import { TimelineHorizontalScrollbar } from "./TimelineHorizontalScrollbar";
+import { TimelineRuler, formatTimecode } from "./TimelineRuler";
+import { TimelineTrackHeaders } from "./TimelineTrackHeaders";
+import { buildTimelineTracks, firstEmptyTrackLane, type TimelineTrack, type TimelineTrackCounts } from "./timelineTracks";
 import type { TimelineClip } from "./timelineTypes";
 import styles from "./TimelinePanel.module.css";
 
@@ -20,13 +25,16 @@ type TimelinePanelProps = {
   error?: string;
   files: ProjectFile[];
   onClipsChange: (clips: TimelineClip[]) => void;
+  onFilesChange: (files: ProjectFile[]) => void;
   onPlayingChange: (playing: boolean) => void;
   onTimeChange: (time: number) => void;
+  onTrackCountsChange: (counts: TimelineTrackCounts) => void;
   playing: boolean;
   time: number;
+  trackCounts: TimelineTrackCounts;
 };
 
-export function TimelinePanel({ clips, error, files, onClipsChange, onPlayingChange, onTimeChange, playing, time }: TimelinePanelProps) {
+export function TimelinePanel({ clips, error, files, onClipsChange, onFilesChange, onPlayingChange, onTimeChange, onTrackCountsChange, playing, time, trackCounts }: TimelinePanelProps) {
   const canvasRef = useRef<HTMLElement>(null);
   const viewportRef = useRef<HTMLElement>(null);
   const dragOffset = useRef(0);
@@ -34,14 +42,32 @@ export function TimelinePanel({ clips, error, files, onClipsChange, onPlayingCha
   const editChanged = useRef(false);
   const undoStack = useRef<TimelineClip[][]>([]);
   const redoStack = useRef<TimelineClip[][]>([]);
+  const metadataRequests = useRef(new Set<string>());
   const [selectedId, setSelectedId] = useState<string>();
   const [scale, setScale] = useState(1);
   const [snapping, setSnapping] = useState(true);
   const [dropError, setDropError] = useState<string>();
   const [undoCount, setUndoCount] = useState(0);
   const [redoCount, setRedoCount] = useState(0);
+  const [dropActive, setDropActive] = useState(false);
+  const [editingTracks, setEditingTracks] = useState<TimelineTrack[]>();
+  const [divider, setDivider] = useState(50);
   const timelineDuration = Math.max(baseDuration, ...clips.map((clip) => clip.start + clip.duration + trailingRoom));
   const contentDuration = Math.max(0, ...clips.map((clip) => clip.start + clip.duration));
+  const tracks = editingTracks ?? buildTimelineTracks(clips, dropActive, clips, trackCounts);
+
+  useEffect(() => {
+    const missing = files.filter((file) => !file.pending && (file.type.startsWith("video/") || file.type.startsWith("audio/")) && !(file.duration && file.duration > 0) && !metadataRequests.current.has(file.id));
+    if (!missing.length) return;
+    missing.forEach((file) => metadataRequests.current.add(file.id));
+    void Promise.all(missing.map(async (file) => {
+      try { return [file.id, await readMediaDuration(assetUrl(file), file.type)] as const; }
+      catch { metadataRequests.current.delete(file.id); return undefined; }
+    })).then((results) => {
+      const durations = new Map(results.filter((result): result is readonly [string, number] => Boolean(result)));
+      if (durations.size) onFilesChange(files.map((file) => durations.has(file.id) ? { ...file, duration: durations.get(file.id) } : file));
+    });
+  }, [files, onFilesChange]);
 
   useEffect(() => {
     if (!playing || !contentDuration) return;
@@ -72,56 +98,85 @@ export function TimelinePanel({ clips, error, files, onClipsChange, onPlayingCha
     return rect ? Math.max(0, Math.min(timelineDuration, ((clientX - rect.left) / rect.width) * timelineDuration)) : 0;
   }
 
-  function laneAt(clientY: number) {
+  function laneAt(clientY: number, role: "visual" | "audio") {
     const rect = canvasRef.current?.getBoundingClientRect();
-    return rect ? Math.max(0, Math.min(4, Math.round((clientY - rect.top - 30) / 48))) : 0;
+    if (!rect) return 0;
+    const dividerY = rect.top + rect.height * divider / 100;
+    const requested = role === "visual" ? Math.floor((dividerY - clientY) / 48) : Math.floor((clientY - dividerY - 8) / 48);
+    const matching = tracks.filter((track) => track.role === role);
+    return Math.max(0, Math.min(matching.length - 1, requested));
   }
 
-  function maximumLane() {
-    const height = canvasRef.current?.getBoundingClientRect().height ?? 0;
-    return Math.max(1, Math.floor((height - 48) / 48));
+  function keepTrack(role: "visual" | "audio", lane: number) {
+    const next = { ...trackCounts, [role]: Math.max(trackCounts[role], lane + 1) };
+    if (next.audio !== trackCounts.audio || next.visual !== trackCounts.visual) onTrackCountsChange(next);
   }
 
   function snap(value: number, movingId?: string) {
     return snapping ? snapTimelineTime(clips, value, time, movingId) : value;
   }
 
-  function dropAsset(event: DragEvent<HTMLElement>) {
+  async function dropAsset(event: DragEvent<HTMLElement>) {
     event.preventDefault();
+    setDropActive(false);
     setDropError(undefined);
     const asset = files.find((file) => file.id === event.dataTransfer.getData("application/x-amplifier-asset"));
     if (!asset || asset.pending) return;
-    const duration = asset.duration && asset.duration > 0 ? asset.duration : 5;
+    const timedMedia = asset.type.startsWith("video/") || asset.type.startsWith("audio/");
+    let duration = asset.duration;
+    if (timedMedia && !(duration && duration > 0)) {
+      try {
+        duration = await readMediaDuration(assetUrl(asset), asset.type);
+        onFilesChange(files.map((item) => item.id === asset.id ? { ...item, duration } : item));
+      } catch (reason) {
+        setDropError(reason instanceof Error ? reason.message : "Could not read media duration");
+        return;
+      }
+    }
+    if (!(duration && duration > 0)) duration = 5;
     const start = snap(timeAt(event.clientX));
-    const lane = laneAt(event.clientY);
+    const visualLane = laneAt(event.clientY, "visual");
+    keepTrack("visual", visualLane);
     if (asset.type.startsWith("video/")) {
+      if (asset.hasAudio === false) {
+        const collisionStart = collisionFreeStart(clips, start, [{ lane: visualLane, role: "visual", offset: 0, duration }]);
+        commit([...clips, { id: crypto.randomUUID(), asset, start: collisionStart, duration, lane: visualLane, sourceDuration: duration, trimStart: 0, role: "visual" }]);
+        return;
+      }
       const linkId = crypto.randomUUID();
-      const visualLane = Math.min(lane, Math.max(0, maximumLane() - 1));
-      const audioLane = visualLane + 1;
-      const collisionStart = collisionFreeStart(clips, start, [{ lane: visualLane, offset: 0, duration }, { lane: audioLane, offset: 0, duration }]);
-      commit([...clips,
-        { id: crypto.randomUUID(), asset, start: collisionStart, duration, lane: visualLane, sourceDuration: duration, trimStart: 0, role: "visual", linkId },
-        { id: crypto.randomUUID(), asset, start: collisionStart, duration, lane: audioLane, sourceDuration: duration, trimStart: 0, role: "audio", linkId },
-      ]);
+      const audioLane = tracks.some((track) => track.role === "audio" && track.lane === visualLane) ? visualLane : firstEmptyTrackLane(clips, "audio");
+      keepTrack("audio", audioLane);
+      const collisionStart = collisionFreeStart(clips, start, [{ lane: visualLane, role: "visual", offset: 0, duration }, { lane: audioLane, role: "audio", offset: 0, duration }]);
+      commit([...clips, { id: crypto.randomUUID(), asset, start: collisionStart, duration, lane: visualLane, sourceDuration: duration, trimStart: 0, role: "visual", linkId }, { id: crypto.randomUUID(), asset, start: collisionStart, duration, lane: audioLane, sourceDuration: duration, trimStart: 0, role: "audio", linkId }]);
       return;
     }
     const role = asset.type.startsWith("audio/") ? "audio" : "visual";
-    const targetLane = role === "audio" ? Math.max(1, lane) : lane;
-    const collisionStart = collisionFreeStart(clips, start, [{ lane: targetLane, offset: 0, duration }]);
+    const targetLane = laneAt(event.clientY, role);
+    keepTrack(role, targetLane);
+    const collisionStart = collisionFreeStart(clips, start, [{ lane: targetLane, role, offset: 0, duration }]);
     commit([...clips, { id: crypto.randomUUID(), asset, start: collisionStart, duration, lane: targetLane, sourceDuration: duration, trimStart: 0, role }]);
   }
 
   function moveClip(id: string, clientX: number, clientY: number) {
+    const moving = clips.find((clip) => clip.id === id);
+    if (!moving) return;
     const desiredStart = Math.max(0, Math.min(timelineDuration - .25, snap(timeAt(clientX) - dragOffset.current, id)));
-    const next = moveTimelineClip(clips, id, desiredStart, laneAt(clientY), maximumLane());
-    if (!sameClips(next, clips)) editChanged.current = true;
-    onClipsChange(next);
+    const targetLane = laneAt(clientY, moving.role);
+    keepTrack(moving.role, targetLane);
+    const linked = moving.linkId ? clips.filter((clip) => clip.linkId === moving.linkId) : [];
+    const movingIds = new Set(linked.map((clip) => clip.id));
+    const targetLanes = linked.length ? Object.fromEntries(["visual", "audio"].map((role) => {
+      if (role === moving.role) return [role, targetLane];
+      const matchingTrackExists = tracks.some((track) => track.role === role && track.lane === targetLane);
+      return [role, matchingTrackExists ? targetLane : firstEmptyTrackLane(clips.filter((clip) => !movingIds.has(clip.id)), role as "visual" | "audio")];
+    })) : undefined;
+    const next = moveTimelineClip(clips, id, desiredStart, targetLane, targetLanes);
+    if (!sameClips(next, clips)) { editChanged.current = true; onClipsChange(next); }
   }
 
   function trimClip(id: string, edge: "start" | "end", clientX: number) {
     const next = trimTimelineClip(clips, id, edge, snap(timeAt(clientX), id));
-    if (!sameClips(next, clips)) editChanged.current = true;
-    onClipsChange(next);
+    if (!sameClips(next, clips)) { editChanged.current = true; onClipsChange(next); }
   }
 
   function splitSelected() {
@@ -160,12 +215,18 @@ export function TimelinePanel({ clips, error, files, onClipsChange, onPlayingCha
     requestAnimationFrame(() => viewportRef.current?.scrollTo({ left: 0 }));
   }
 
-  function beginEdit() {
+  function beginEdit(kind: "move" | "trim", id: string) {
+    if (kind === "move") {
+      const moving = clips.find((clip) => clip.id === id);
+      const movingIds = new Set(clips.filter((clip) => clip.id === id || Boolean(moving?.linkId && clip.linkId === moving.linkId)).map((clip) => clip.id));
+      setEditingTracks(buildTimelineTracks(clips, true, clips.filter((clip) => !movingIds.has(clip.id)), trackCounts));
+    }
     editSnapshot.current = clips;
     editChanged.current = false;
   }
 
   function finishEdit() {
+    setEditingTracks(undefined);
     if (editChanged.current && editSnapshot.current) {
       undoStack.current.push(editSnapshot.current);
       redoStack.current = [];
@@ -187,6 +248,13 @@ export function TimelinePanel({ clips, error, files, onClipsChange, onPlayingCha
     if (event.currentTarget.hasPointerCapture(event.pointerId)) onTimeChange(Math.min(contentDuration, timeAt(event.clientX)));
   }
 
+  function resizeDivider(event: PointerEvent<HTMLButtonElement>) {
+    if (event.type === "pointerdown") event.currentTarget.setPointerCapture(event.pointerId);
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (rect) setDivider(Math.max(25, Math.min(75, ((event.clientY - rect.top) / rect.height) * 100)));
+  }
+
   useTimelineShortcuts({ onDelete: deleteSelected, onDeselect: () => setSelectedId(undefined), onFit: fitTimeline, onRedo: redo, onSeek: (change) => onTimeChange(Math.max(0, Math.min(contentDuration, time + change))), onSetPlaying: onPlayingChange, onSplit: splitSelected, onTogglePlayback: () => onPlayingChange(!playing), onToggleSnapping: () => setSnapping((value) => !value), onUndo: undo, onZoom: (change) => setScale((value) => Math.max(1, Math.min(8, value + change))) });
 
   const clipHandlers: TimelineClipHandlers = { onBeginEdit: beginEdit, onEndEdit: finishEdit, onMove: moveClip, onSelect: setSelectedId, onTrim: trimClip };
@@ -206,34 +274,31 @@ export function TimelinePanel({ clips, error, files, onClipsChange, onPlayingCha
             <button aria-keyshortcuts="N" aria-label={`${snapping ? "Disable" : "Enable"} snapping`} aria-pressed={snapping} onClick={() => setSnapping((value) => !value)} type="button"><Magnet size={15} /></button>
           </nav>
         </section>
-        <section className={styles.playback}><button aria-keyshortcuts="Space" aria-label={playing ? "Pause" : "Play"} onClick={() => onPlayingChange(!playing)} type="button">{playing ? <Pause size={16} /> : <Play size={16} />}</button><time>{formatTime(time)}</time></section>
+        <section className={styles.playback}><button aria-keyshortcuts="Space" aria-label={playing ? "Pause" : "Play"} onClick={() => onPlayingChange(!playing)} type="button">{playing ? <Pause size={16} /> : <Play size={16} />}</button><time>{formatTimecode(time)}</time></section>
         <section className={styles.toolGroup} data-end><nav aria-label="Timeline view"><button aria-keyshortcuts="-" aria-label="Zoom out" disabled={scale <= 1} onClick={() => setScale((value) => Math.max(1, value - 1))} type="button"><ZoomOut size={15} /></button><button aria-keyshortcuts="0" aria-label="Fit timeline" onClick={fitTimeline} type="button"><Maximize2 size={15} /></button><button aria-keyshortcuts="+" aria-label="Zoom in" disabled={scale >= 8} onClick={() => setScale((value) => Math.min(8, value + 1))} type="button"><ZoomIn size={15} /></button></nav></section>
       </header>
       <section className={styles.composition}>
         {(dropError || error) && <p className={styles.dropError} role="alert">{dropError || error}</p>}
-        <section className={styles.viewport} ref={viewportRef}>
-          <section className={styles.timelineCanvas} style={{ "--timeline-scale": scale } as CSSProperties}>
-            <ol className={styles.ruler} aria-hidden="true">{stops(timelineDuration, scale).map((stop) => <li key={stop} style={{ left: `${(stop / timelineDuration) * 100}%` }}>{formatTime(stop)}</li>)}</ol>
-            <section aria-label="Editable timeline" className={styles.canvas} onDragOver={(event) => event.preventDefault()} onDrop={dropAsset} onPointerDown={startScrub} onPointerMove={scrub} ref={canvasRef}>
-              {clips.map((clip) => <TimelineClipItem clip={clip} dragOffsetRef={dragOffset} handlers={clipHandlers} key={clip.id} selected={clip.id === selectedId} timelineDuration={timelineDuration} />)}
-              {!clips.length && <p className={styles.empty}>Drag media here</p>}
-              <i aria-hidden="true" className={styles.playhead} style={{ left: `${(time / timelineDuration) * 100}%` }} />
+        <section className={styles.trackLayout} style={{ "--av-divider": `${divider}%`, "--track-count": tracks.length } as CSSProperties}>
+          <time className={styles.timelineTimecode}>{formatTimecode(time)}</time>
+          <TimelineTrackHeaders clips={clips} tracks={tracks} />
+          <section className={styles.viewport} ref={viewportRef}>
+            <section className={styles.timelineCanvas} style={{ "--timeline-scale": scale } as CSSProperties}>
+              <TimelineRuler duration={timelineDuration} scale={scale} />
+              <section aria-label="Editable timeline" className={styles.canvas} onDragEnter={() => setDropActive(true)} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropActive(false); }} onDragOver={(event) => event.preventDefault()} onDrop={dropAsset} onPointerDown={startScrub} onPointerMove={scrub} ref={canvasRef}>
+                {clips.map((clip) => <TimelineClipItem clip={clip} dragOffsetRef={dragOffset} handlers={clipHandlers} key={clip.id} selected={clip.id === selectedId} timelineDuration={timelineDuration} />)}
+                {!clips.length && <p className={styles.empty}>Drag media here</p>}
+                <button aria-label="Resize video and audio track areas" className={styles.avDivider} onPointerDown={resizeDivider} onPointerMove={resizeDivider} type="button" />
+                <i aria-hidden="true" className={styles.playhead} style={{ left: `${(time / timelineDuration) * 100}%` }} />
+              </section>
             </section>
           </section>
         </section>
+        <TimelineHorizontalScrollbar scale={scale} viewportRef={viewportRef} />
       </section>
       <TimelineModeSwitcher />
     </section>
   );
-}
-
-function stops(duration: number, scale: number) {
-  const step = scale >= 5 ? 2 : scale >= 2 ? 5 : 10;
-  return Array.from({ length: Math.floor(duration / step) + 1 }, (_, index) => index * step);
-}
-
-function formatTime(value: number) {
-  return `${Math.floor(value / 60)}:${Math.floor(value % 60).toString().padStart(2, "0")}`;
 }
 
 function sameClips(left: TimelineClip[], right: TimelineClip[]) {

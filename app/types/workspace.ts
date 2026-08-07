@@ -28,6 +28,7 @@ export type ProjectFile = {
   duration?: number;
   width?: number;
   height?: number;
+  hasAudio?: boolean;
 };
 
 export type WorkspaceData = {

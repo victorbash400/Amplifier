@@ -7,7 +7,7 @@ type UploadSession = { upload_url: string; object_key: string };
 type CompletedUpload = { object_key: string; generation: string; size: number; content_type: string };
 
 export async function uploadProjectAsset({ assetId, file, folderId, localUrl, onProgress, projectId }: { assetId: string; file: File; folderId: string; localUrl: string; onProgress: (progress: number) => void; projectId: string }): Promise<ProjectFile> {
-  const metadata = await readAssetMetadata(localUrl, file.type);
+  const metadata = await readAssetMetadata(localUrl, file);
   const session = await request<UploadSession>("POST", { projectId, assetId, fileName: file.name, contentType: file.type || "application/octet-stream", size: file.size });
   await uploadChunks(session.upload_url, file, onProgress);
   const completed = await request<CompletedUpload>("PATCH", { projectId, assetId, fileName: file.name, size: file.size });
@@ -18,6 +18,16 @@ export function assetUrl(file: ProjectFile) {
   if (file.localUrl) return file.localUrl;
   if (!file.objectKey) return "";
   return `/api/assets/media?projectId=${encodeURIComponent(file.projectId)}&objectKey=${encodeURIComponent(file.objectKey)}`;
+}
+
+export function readMediaDuration(url: string, contentType: string) {
+  return new Promise<number>((resolve, reject) => {
+    const media = document.createElement(contentType.startsWith("audio/") ? "audio" : "video");
+    media.preload = "metadata";
+    media.onloadedmetadata = () => Number.isFinite(media.duration) && media.duration > 0 ? resolve(media.duration) : reject(new Error("Media duration is invalid"));
+    media.onerror = () => reject(new Error("Could not read media duration"));
+    media.src = url;
+  });
 }
 
 async function uploadChunks(uploadUrl: string, file: File, onProgress: (progress: number) => void) {
@@ -67,22 +77,44 @@ async function request<T>(method: "POST" | "PATCH", body: Record<string, unknown
   return result;
 }
 
-function readAssetMetadata(url: string, contentType: string) {
+function readAssetMetadata(url: string, file: File) {
+  const contentType = file.type;
   if (contentType.startsWith("image/")) return new Promise<{ width: number; height: number }>((resolve, reject) => {
     const image = new Image();
     image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
     image.onerror = () => reject(new Error("Could not read image metadata"));
     image.src = url;
   });
-  if (contentType.startsWith("video/") || contentType.startsWith("audio/")) return new Promise<{ duration: number; width?: number; height?: number }>((resolve, reject) => {
+  if (contentType.startsWith("video/") || contentType.startsWith("audio/")) return new Promise<{ duration: number; width?: number; height?: number; hasAudio?: boolean }>((resolve, reject) => {
     const media = document.createElement(contentType.startsWith("video/") ? "video" : "audio");
     media.preload = "metadata";
-    media.onloadedmetadata = () => {
+    media.onloadedmetadata = async () => {
       if (!Number.isFinite(media.duration)) return reject(new Error("Media duration is invalid"));
-      resolve({ duration: media.duration, ...(media instanceof HTMLVideoElement ? { width: media.videoWidth, height: media.videoHeight } : {}) });
+      resolve({ duration: media.duration, ...(media instanceof HTMLVideoElement ? { width: media.videoWidth, height: media.videoHeight, hasAudio: await videoHasAudio(media, file) } : {}) });
     };
     media.onerror = () => reject(new Error("Could not read media metadata"));
     media.src = url;
   });
   return Promise.resolve({});
+}
+
+async function videoHasAudio(video: HTMLVideoElement, file: File) {
+  const aware = video as HTMLVideoElement & { audioTracks?: { length: number }; mozHasAudio?: boolean; webkitAudioDecodedByteCount?: number; captureStream?: () => MediaStream };
+  if (aware.audioTracks) return aware.audioTracks.length > 0;
+  if (typeof aware.mozHasAudio === "boolean") return aware.mozHasAudio;
+  const captured = aware.captureStream?.().getAudioTracks();
+  if (captured?.length) return true;
+  if (typeof aware.webkitAudioDecodedByteCount === "number" && aware.webkitAudioDecodedByteCount > 0) return true;
+  return fileContainsAudioTrack(file);
+}
+
+async function fileContainsAudioTrack(file: File) {
+  const sampleSize = 16 * 1024 * 1024;
+  const samples = [file.slice(0, Math.min(sampleSize, file.size))];
+  if (file.size > sampleSize) samples.push(file.slice(Math.max(0, file.size - sampleSize)));
+  for (const sample of samples) {
+    const text = new TextDecoder("latin1").decode(await sample.arrayBuffer());
+    if (text.includes("soun") || text.includes("A_OPUS") || text.includes("A_VORBIS") || text.includes("A_AAC")) return true;
+  }
+  return false;
 }

@@ -1,7 +1,9 @@
 "use client";
 
-import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
+import { useState } from "react";
 import type { ProjectFile, ProjectFolder } from "../types/workspace";
+import { AssetRenameInput } from "./AssetRenameInput";
 import { FileRow } from "./FileRow";
 import { FolderIcon } from "./icons/FolderIcon";
 import styles from "./FileSidebar.module.css";
@@ -16,16 +18,19 @@ type FolderRowProps = {
   onDeleteFile: (file: ProjectFile) => void;
   onDeleteFolder: (id: string) => void;
   onOpenFile: (file: ProjectFile) => void;
+  onRenameFile: (file: ProjectFile, name: string) => void;
+  onRenameFolder: (id: string, name: string) => void;
   onSelect: (id: string) => void;
   onToggle: (id: string) => void;
 };
 
 export function FolderRow(props: FolderRowProps) {
-  const { folder, folders, files, expanded, selectedId, onCreateFolder, onDeleteFile, onDeleteFolder, onOpenFile, onSelect, onToggle } = props;
+  const { folder, folders, files, expanded, selectedId, onCreateFolder, onDeleteFile, onDeleteFolder, onOpenFile, onRenameFile, onRenameFolder, onSelect, onToggle } = props;
+  const [renaming, setRenaming] = useState(false);
   const children = folders.filter((item) => item.parentId === folder.id);
   const ownFiles = files.filter((file) => file.folderId === folder.id);
   const isExpanded = expanded.has(folder.id);
   const hasContents = children.length > 0 || ownFiles.length > 0;
 
-  return <section className={styles.branch}><p className={styles.folderRow} data-selected={selectedId === folder.id}>{hasContents ? <button aria-label={`${isExpanded ? "Collapse" : "Expand"} ${folder.name}`} className={styles.chevron} onClick={() => onToggle(folder.id)} type="button">{isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</button> : <span className={styles.chevron} />}<button className={styles.folderName} onClick={() => onSelect(folder.id)} type="button"><FolderIcon color={folder.color} /><span>{folder.name}</span></button><button aria-label={`New folder in ${folder.name}`} className={styles.rowAction} onClick={() => onCreateFolder(folder.id)} type="button"><Plus size={14} /></button><button aria-label={`Delete ${folder.name}`} className={styles.rowAction} onClick={() => onDeleteFolder(folder.id)} type="button"><Trash2 size={13} /></button></p>{isExpanded && ownFiles.map((file) => <FileRow file={file} key={file.id} onDelete={onDeleteFile} onOpen={onOpenFile} />)}{isExpanded && children.map((child) => <FolderRow {...props} folder={child} key={child.id} />)}</section>;
+  return <section className={styles.branch}><p className={styles.folderRow} data-selected={selectedId === folder.id}>{hasContents ? <button aria-label={`${isExpanded ? "Collapse" : "Expand"} ${folder.name}`} className={styles.chevron} onClick={() => onToggle(folder.id)} type="button">{isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</button> : <span className={styles.chevron} />}{renaming ? <AssetRenameInput icon={<FolderIcon color={folder.color} open={isExpanded} />} label={`Rename ${folder.name}`} maxLength={80} name={folder.name} onCancel={() => setRenaming(false)} onRename={(name) => { setRenaming(false); onRenameFolder(folder.id, name); }} /> : <button className={styles.folderName} onClick={() => onSelect(folder.id)} onDoubleClick={() => setRenaming(true)} type="button"><FolderIcon color={folder.color} open={isExpanded} /><span>{folder.name}</span></button>}<button aria-label={`Rename ${folder.name}`} className={styles.rowAction} onClick={() => setRenaming(true)} title="Rename folder" type="button"><Pencil size={12} /></button><button aria-label={`New folder in ${folder.name}`} className={styles.rowAction} onClick={() => onCreateFolder(folder.id)} type="button"><Plus size={14} /></button><button aria-label={`Delete ${folder.name}`} className={styles.rowAction} onClick={() => onDeleteFolder(folder.id)} type="button"><Trash2 size={13} /></button></p>{isExpanded && ownFiles.map((file) => <FileRow file={file} key={file.id} onDelete={onDeleteFile} onOpen={onOpenFile} onRename={onRenameFile} />)}{isExpanded && children.map((child) => <FolderRow {...props} folder={child} key={child.id} />)}</section>;
 }

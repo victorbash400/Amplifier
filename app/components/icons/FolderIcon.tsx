@@ -1,3 +1,5 @@
+import Image from "next/image";
+
 export type FolderColor = "walnut" | "clay" | "ochre" | "olive";
 type FolderIconSize = "button" | "project" | "topbar";
 
@@ -16,9 +18,11 @@ const sizes: Record<FolderIconSize, { height: number; width: number }> = {
   topbar: { height: 30, width: 42 },
 };
 
-export function FolderIcon({ color = "olive", size = "button" }: { color?: FolderColor; size?: FolderIconSize }) {
+export function FolderIcon({ color = "olive", open, size = "button" }: { color?: FolderColor; open?: boolean; size?: FolderIconSize }) {
   const dimensions = sizes[size];
   const palette = colors[color];
+
+  if (open !== undefined) return <Image alt="" height={dimensions.height} src={`/accessible-media-icons/folder${open ? "-open" : ""}-svgrepo-com.svg`} width={dimensions.width} />;
 
   return (
     <svg aria-hidden="true" fill="none" height={dimensions.height} viewBox="0 0 144 104" width={dimensions.width}>

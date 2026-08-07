@@ -1,21 +1,20 @@
 import { collisionFreeStart, nextClipStart, previousClipEnd } from "./timelineLayout";
 
-export type EditableTimelineClip = { id: string; lane: number; start: number; duration: number; sourceDuration: number; trimStart: number; linkId?: string };
+export type EditableTimelineClip = { id: string; lane: number; role: string; start: number; duration: number; sourceDuration: number; trimStart: number; linkId?: string };
 const minimumDuration = 0.25;
 
-export function moveTimelineClip<T extends EditableTimelineClip>(clips: T[], id: string, desiredStart: number, targetLane: number, maximumLane: number) {
+export function moveTimelineClip<T extends EditableTimelineClip>(clips: T[], id: string, desiredStart: number, targetLane: number, targetLanes?: Record<string, number>) {
   const moving = clips.find((clip) => clip.id === id);
   if (!moving) return clips;
   const linked = moving.linkId ? clips.filter((clip) => clip.linkId === moving.linkId) : [moving];
   const requestedLaneChange = targetLane - moving.lane;
   const lowestLane = Math.min(...linked.map((clip) => clip.lane + requestedLaneChange));
-  let laneChange = requestedLaneChange - Math.min(0, lowestLane);
-  const highestLane = Math.max(...linked.map((clip) => clip.lane + laneChange));
-  laneChange -= Math.max(0, highestLane - maximumLane);
+  const laneChange = requestedLaneChange - Math.min(0, lowestLane);
   const movingIds = new Set(linked.map((clip) => clip.id));
-  const placements = linked.map((clip) => ({ lane: clip.lane + laneChange, offset: clip.start - moving.start, duration: clip.duration }));
+  const laneFor = (clip: T) => targetLanes?.[clip.role] ?? clip.lane + laneChange;
+  const placements = linked.map((clip) => ({ lane: laneFor(clip), role: clip.role, offset: clip.start - moving.start, duration: clip.duration }));
   const start = collisionFreeStart(clips, Math.max(0, desiredStart), placements, movingIds);
-  return clips.map((clip) => movingIds.has(clip.id) ? { ...clip, start: Math.max(0, start + clip.start - moving.start), lane: clip.lane + laneChange } : clip);
+  return clips.map((clip) => movingIds.has(clip.id) ? { ...clip, start: Math.max(0, start + clip.start - moving.start), lane: laneFor(clip) } : clip);
 }
 
 export function splitTimelineClip<T extends EditableTimelineClip>(clips: T[], id: string, playhead: number, createId: () => string) {
@@ -37,12 +36,12 @@ export function trimTimelineClip<T extends EditableTimelineClip>(clips: T[], id:
   return clips.map((clip) => {
     if (!groupIds.has(clip.id)) return clip;
     if (edge === "start") {
-      const earliest = Math.max(clip.start - clip.trimStart, previousClipEnd(clips, clip.lane, clip.start, groupIds));
+      const earliest = Math.max(clip.start - clip.trimStart, previousClipEnd(clips, clip.role, clip.lane, clip.start, groupIds));
       const start = Math.max(earliest, Math.min(time, clip.start + clip.duration - minimumDuration));
       const change = start - clip.start;
       return { ...clip, start, duration: clip.duration - change, trimStart: clip.trimStart + change };
     }
-    const nextStart = nextClipStart(clips, clip.lane, clip.start + clip.duration, groupIds);
+    const nextStart = nextClipStart(clips, clip.role, clip.lane, clip.start + clip.duration, groupIds);
     return { ...clip, duration: Math.min(clip.sourceDuration - clip.trimStart, Math.max(minimumDuration, nextStart - clip.start), Math.max(minimumDuration, time - clip.start)) };
   });
 }
