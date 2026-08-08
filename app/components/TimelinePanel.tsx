@@ -46,6 +46,7 @@ export function TimelinePanel({ clips, error, files, onAskAgent, onClipsChange, 
   const undoStack = useRef<TimelineClip[][]>([]);
   const redoStack = useRef<TimelineClip[][]>([]);
   const metadataRequests = useRef(new Set<string>());
+  const playbackTime = useRef(time);
   const [selectedId, setSelectedId] = useState<string>();
   const [scale, setScale] = useState(1);
   const [snapping, setSnapping] = useState(true);
@@ -66,6 +67,8 @@ export function TimelinePanel({ clips, error, files, onAskAgent, onClipsChange, 
   const modeClipSelected = mode === "vision" || mode === "vision-cognitive" ? selectedHasVisual : mode === "hearing" || mode === "hearing-cognitive" ? selectedHasAudio : Boolean(selectedClip);
   const modeLabel = mode === "vision-cognitive" ? "Vision + Cognitive" : mode === "hearing-cognitive" ? "Hearing + Cognitive" : mode === "deafblind-cognitive" ? "Deafblind + Cognitive" : `${mode.charAt(0).toUpperCase()}${mode.slice(1)}`;
 
+  useEffect(() => { playbackTime.current = time; }, [time]);
+
   useEffect(() => {
     const missing = files.filter((file) => !file.pending && (file.type.startsWith("video/") || file.type.startsWith("audio/")) && !(file.duration && file.duration > 0) && !metadataRequests.current.has(file.id));
     if (!missing.length) return;
@@ -84,16 +87,15 @@ export function TimelinePanel({ clips, error, files, onAskAgent, onClipsChange, 
     let frame = 0;
     let previous = performance.now();
     const tick = (now: number) => {
-      if (now - previous >= 1000 / 30) {
-        const next = time + (now - previous) / 1000;
-        previous = now;
-        onTimeChange(next >= contentDuration ? 0 : next);
-      }
+      const next = playbackTime.current + (now - previous) / 1000;
+      previous = now;
+      playbackTime.current = next >= contentDuration ? 0 : next;
+      onTimeChange(playbackTime.current);
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [contentDuration, onTimeChange, playing, time]);
+  }, [contentDuration, onTimeChange, playing]);
 
   function commit(next: TimelineClip[]) {
     undoStack.current.push(clips);

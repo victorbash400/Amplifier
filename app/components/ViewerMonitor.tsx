@@ -10,6 +10,7 @@ import styles from "./ViewerMonitor.module.css";
 
 export function ViewerMonitor({ asset, sourceStart = 0, timeline, title }: { asset?: ProjectFile; sourceStart?: number; timeline?: TimelinePreviewState; title: "Preview" | "Timeline" }) {
   const mediaRef = useRef<HTMLMediaElement>(null);
+  const timelineRef = useRef(timeline);
   const frameRef = useRef<HTMLElement>(null);
   const [previewPlaying, setPreviewPlaying] = useState(false);
   const [previewTime, setPreviewTime] = useState(sourceStart);
@@ -17,13 +18,25 @@ export function ViewerMonitor({ asset, sourceStart = 0, timeline, title }: { ass
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
 
+  const playing = timeline?.playing || previewPlaying;
+  const timelineSourceTime = timeline?.sourceTime;
+
+  useEffect(() => { timelineRef.current = timeline; }, [timeline]);
+
   useEffect(() => {
     const media = mediaRef.current;
     if (!media) return;
-    if (timeline && Math.abs(media.currentTime - timeline.sourceTime) > 0.12) media.currentTime = timeline.sourceTime;
-    if (timeline?.playing || (!timeline && previewPlaying)) void media.play().catch(() => undefined);
-    else media.pause();
-  }, [previewPlaying, timeline]);
+    if (playing) {
+      if (timelineRef.current) media.currentTime = timelineRef.current.sourceTime;
+      void media.play().catch(() => undefined);
+    } else media.pause();
+  }, [playing]);
+
+  useEffect(() => {
+    const media = mediaRef.current;
+    if (!media || timelineSourceTime === undefined || playing) return;
+    media.currentTime = timelineSourceTime;
+  }, [playing, timelineSourceTime]);
 
   useEffect(() => {
     const media = mediaRef.current;
@@ -40,7 +53,6 @@ export function ViewerMonitor({ asset, sourceStart = 0, timeline, title }: { ass
     return () => { media.removeEventListener("timeupdate", updateTime); media.removeEventListener("loadedmetadata", updateDuration); };
   }, [asset, sourceStart, timeline]);
 
-  const playing = timeline?.playing || previewPlaying;
   const currentTime = timeline?.timelineTime ?? previewTime;
   const duration = timeline?.timelineDuration ?? previewDuration;
   const togglePlayback = () => timeline ? timeline.onTogglePlayback() : setPreviewPlaying((current) => !current);
