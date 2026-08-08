@@ -1,4 +1,4 @@
-import { Accessibility, Activity, AudioLines, AudioWaveform, BadgeInfo, BookOpen, Captions, CaseUpper, CircleAlert, Clock3, Contrast, Eye, FileText, Focus, Gauge, Image, Languages, ListMusic, ListTree, MessageSquareText, Music, Navigation, PanelsTopLeft, Pin, Rows3, Scissors, SkipForward, Speech, Tags, TextQuote, UserRound, Vibrate, Video, Volume1, Volume2, ZapOff } from "lucide-react";
+import { Accessibility, Activity, AudioLines, AudioWaveform, BadgeInfo, BookOpen, Captions, CaseUpper, CircleAlert, Clock3, Contrast, Eye, FileText, Focus, Gauge, Image, Languages, ListTree, MessageSquareText, Navigation, PanelsTopLeft, Pin, Rows3, Scissors, SkipForward, Tags, TextQuote, UserRound, Vibrate, Video, Volume1, Volume2, ZapOff } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import NextImage from "next/image";
 import type { TimelineMode } from "./TimelineModeSwitcher";
@@ -17,7 +17,7 @@ const modeTools: Record<Exclude<TimelineMode, "edit">, Tool[]> = {
     tool("Audio description", "Audio describe", AudioLines, "audio-description"), tool("Spoken on-screen text", "Spoken text", Volume2, "spoken-text"), tool("Descriptive transcript", "Transcript", FileText, "transcript"), tool("Braille transcript", "Braille", Accessibility, "braille", brailleIcon), tool("Larger text", "Larger text", CaseUpper, "larger-text"), tool("Higher contrast", "Contrast", Contrast, "contrast"), tool("Colour-safe visuals", "Colour safe", Contrast, "color-safe"),
   ],
   hearing: [
-    tool("Captions", "Captions", Captions), tool("Speaker identification", "Speakers", UserRound), tool("Sound-effect captions", "Sound effects", AudioWaveform), tool("Music descriptions", "Music desc.", Music), tool("Lyrics", "Lyrics", ListMusic), tool("Transcript", "Transcript", FileText), tool("Sign-language interpretation", "Sign language", Languages), tool("Dialogue enhancement", "Dialogue", Speech), tool("Reduced background noise", "Noise reduce", Volume1),
+    tool("Captions", "Captions", Captions), tool("Transcript", "Transcript", FileText), tool("Sign-language interpretation", "Sign language", Languages), tool("Reduced background noise", "Noise reduce", Volume1),
   ],
   deafblind: [
     tool("Braille-ready transcript", "Braille", Accessibility, undefined, brailleIcon), tool("Structured descriptive transcript", "Structured text", FileText), tool("Speaker and scene labels", "Labels", Tags), tool("Explicit sound descriptions", "Sound desc.", AudioLines), tool("Explicit visual descriptions", "Visual desc.", Eye), tool("Chapters and navigation landmarks", "Navigation", Navigation), tool("Large-print version", "Large print", CaseUpper), tool("Haptic or tactile cue metadata", "Tactile cues", Vibrate),
