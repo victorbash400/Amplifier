@@ -19,6 +19,7 @@ def environment(name: str, default: str = "") -> str:
 class Settings:
     google_cloud_project: str
     google_cloud_location: str
+    google_speech_location: str
     agent_model: str
     gcs_bucket: str
     clickhouse_host: str
@@ -31,6 +32,7 @@ class Settings:
 settings = Settings(
     google_cloud_project=environment("GOOGLE_CLOUD_PROJECT", "amplifier-20260806"),
     google_cloud_location=environment("GOOGLE_CLOUD_LOCATION", "global"),
+    google_speech_location=environment("GOOGLE_SPEECH_LOCATION", "us"),
     agent_model=environment("AMPLIFIER_AGENT_MODEL", "gemini-3.1-pro-preview"),
     gcs_bucket=environment("AMPLIFIER_GCS_BUCKET", "amplifier-20260806-assets"),
     clickhouse_host=environment("CLICKHOUSE_HOST"),

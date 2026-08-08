@@ -5,6 +5,7 @@ export type MediaAssetState = {
   name?: string;
   status: MediaIndexStatus;
   stage?: string;
+  progress?: number;
   error?: string;
   updatedAt?: string;
 };

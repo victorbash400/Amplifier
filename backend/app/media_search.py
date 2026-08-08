@@ -14,32 +14,21 @@ from collections.abc import Awaitable, Callable
 from google import genai
 from google.genai import types
 from google.cloud import storage
-from pydantic import BaseModel, Field
 
 from app.clickhouse import clickhouse_client
 from app.config import settings
+from app.media_indexing import INDEX_ANALYSIS_MODEL, IndexedMoment, build_local_index
 
 
-SEARCH_SCHEMA_VERSION = 2
+SEARCH_SCHEMA_VERSION = 3
 SEARCH_EMBEDDING_MODEL = "gemini-embedding-2"
-SEARCH_ANALYSIS_MODEL = "gemini-3-flash-preview"
+SEARCH_ANALYSIS_MODEL = INDEX_ANALYSIS_MODEL
 SEARCH_VECTOR_DIMENSIONS = 768
 STALE_INDEX_AFTER = timedelta(minutes=10)
 
 _schema_lock = asyncio.Lock()
 _schema_ready = False
 _asset_locks: dict[tuple[str, str], asyncio.Lock] = {}
-
-
-class MomentDraft(BaseModel):
-    start: float = Field(ge=0)
-    end: float = Field(ge=0)
-    description: str = Field(min_length=1, max_length=3000)
-    transcript: str = Field(default="", max_length=3000)
-
-
-class MomentAnalysis(BaseModel):
-    moments: list[MomentDraft] = Field(min_length=1, max_length=80)
 
 
 ProgressCallback = Callable[[dict[str, object]], Awaitable[None]]
@@ -56,26 +45,35 @@ async def _index_asset_locked(*, project_id: str, asset_id: str, object_key: str
     existing = await _asset_index_state(project_id, asset_id)
     if existing and not force and existing[0] in {"ready", "indexing", "failed"}:
         return {"asset_id": asset_id, "status": existing[0], "stage": existing[1], "error": existing[2], "reused": True}
-    await _write_index_row(project_id=project_id, asset_id=asset_id, object_key=object_key, name=name, content_type=content_type, folder_id=folder_id, status="indexing", stage="Analyzing moments")
-    await _progress(on_progress, asset_id, "indexing", "Analyzing moments", 0)
+    await _write_index_row(project_id=project_id, asset_id=asset_id, object_key=object_key, name=name, content_type=content_type, folder_id=folder_id, status="indexing", stage="Downloading source")
+    await _progress(on_progress, asset_id, "indexing", "Downloading source", 0)
+    source = await asyncio.to_thread(_download_source, object_key, content_type)
     try:
-        moments = await _analyze_moments(object_key, name, content_type, duration)
-        document = " ".join(moment.description for moment in moments)[:6000]
-        await _write_index_row(project_id=project_id, asset_id=asset_id, object_key=object_key, name=name, content_type=content_type, folder_id=folder_id, status="indexing", stage="Creating moment embeddings", document=document)
-        await _progress(on_progress, asset_id, "indexing", "Creating moment embeddings", 25)
+        stage = "Describing image" if content_type.startswith("image/") else "Transcribing and describing"
+        await _write_index_row(project_id=project_id, asset_id=asset_id, object_key=object_key, name=name, content_type=content_type, folder_id=folder_id, status="indexing", stage=stage)
+        await _progress(on_progress, asset_id, "indexing", stage, 15)
+        media_index = await build_local_index(source, content_type, duration)
+        moments = media_index.moments
+        document = media_index.summary[:6000]
+        silence_ranges = json.dumps([item.__dict__ for item in media_index.silence], separators=(",", ":"))
+        await _write_index_row(project_id=project_id, asset_id=asset_id, object_key=object_key, name=name, content_type=content_type, folder_id=folder_id, status="indexing", stage="Creating search embeddings", document=document, silence_ranges=silence_ranges)
+        await _progress(on_progress, asset_id, "indexing", "Creating search embeddings", 60)
         embeddings = await _embed_documents([f"{name}. {moment.description}. {moment.transcript}" for moment in moments])
-        await _write_index_row(project_id=project_id, asset_id=asset_id, object_key=object_key, name=name, content_type=content_type, folder_id=folder_id, status="indexing", stage="Rendering previews", document=document)
-        await _progress(on_progress, asset_id, "indexing", "Rendering previews", 50)
-        thumbnail_keys = await asyncio.to_thread(_render_moment_previews, project_id, asset_id, object_key, content_type, moments)
-        await _progress(on_progress, asset_id, "indexing", "Saving searchable moments", 75)
+        summary_embedding = (await _embed_documents([f"{name}. {document}"]))[0]
+        await _write_index_row(project_id=project_id, asset_id=asset_id, object_key=object_key, name=name, content_type=content_type, folder_id=folder_id, status="indexing", stage="Rendering previews", document=document, silence_ranges=silence_ranges, embedding=summary_embedding)
+        await _progress(on_progress, asset_id, "indexing", "Rendering previews", 75)
+        thumbnail_keys = await asyncio.to_thread(_render_moment_previews, source, project_id, asset_id, content_type, moments)
+        await _progress(on_progress, asset_id, "indexing", "Saving searchable moments", 90)
         await _replace_moments(project_id=project_id, asset_id=asset_id, object_key=object_key, name=name, content_type=content_type, folder_id=folder_id, moments=moments, embeddings=embeddings, thumbnail_keys=thumbnail_keys)
-        await _write_index_row(project_id=project_id, asset_id=asset_id, object_key=object_key, name=name, content_type=content_type, folder_id=folder_id, status="ready", stage=f"Ready · {len(moments)} moments", document=document)
-        result = {"asset_id": asset_id, "status": "ready", "stage": f"Ready · {len(moments)} moments", "progress": 100, "moments": len(moments)}
+        await _write_index_row(project_id=project_id, asset_id=asset_id, object_key=object_key, name=name, content_type=content_type, folder_id=folder_id, status="ready", stage="Ready", document=document, silence_ranges=silence_ranges, embedding=summary_embedding)
+        result = {"asset_id": asset_id, "status": "ready", "stage": "Ready", "progress": 100, "moments": len(moments)}
         await _progress(on_progress, asset_id, "ready", result["stage"], 100)
         return result
     except Exception as error:
         await _write_index_row(project_id=project_id, asset_id=asset_id, object_key=object_key, name=name, content_type=content_type, folder_id=folder_id, status="failed", stage="Failed", error=str(error)[:500])
         raise
+    finally:
+        source.unlink(missing_ok=True)
 
 
 async def _progress(callback: ProgressCallback | None, asset_id: str, status: str, stage: object, progress: int) -> None:
@@ -112,22 +110,42 @@ async def search_assets(project_id: str, query: str, limit: int = 18) -> list[di
         await _ensure_schema(client)
         result = await client.query(
             """
+            WITH
+                ready_assets AS (
+                    SELECT asset_id FROM asset_search_index FINAL
+                    WHERE project_id = {project_id:String} AND status = 'ready'
+                      AND schema_version = {schema_version:UInt16}
+                ),
+                lexical_assets AS (
+                    SELECT DISTINCT asset_id
+                    FROM asset_search_moments FINAL
+                    WHERE project_id = {project_id:String}
+                      AND schema_version = {schema_version:UInt16}
+                      AND asset_id IN ready_assets
+                      AND hasAllTokens(search_text, lowerUTF8({query:String}))
+                ),
+                (SELECT count() FROM lexical_assets) AS lexical_asset_count
             SELECT moment_id, asset_id, asset_name, object_key, content_type, folder_id, thumbnail_key,
                    start, end, description, transcript,
-                   1 - cosineDistance(embedding, {embedding:Array(Float32)}) AS score
+                   1 - cosineDistance(embedding, {embedding:Array(Float32)}) AS vector_score,
+                   hasAllTokens(search_text, lowerUTF8({query:String})) AS lexical_match
             FROM asset_search_moments FINAL
             WHERE project_id = {project_id:String} AND schema_version = {schema_version:UInt16}
               AND length(embedding) = {dimensions:UInt16}
-              AND asset_id IN (
-                SELECT asset_id FROM asset_search_index FINAL
-                WHERE project_id = {project_id:String} AND status = 'ready' AND schema_version = {schema_version:UInt16}
-              )
-            ORDER BY score DESC
-            LIMIT {limit:UInt16}
+              AND asset_id IN ready_assets
+              AND (lexical_asset_count = 0 OR asset_id IN lexical_assets)
+            ORDER BY vector_score + if(lexical_match, 0.08, 0) DESC
+            LIMIT {candidate_limit:UInt16}
             """,
-            parameters={"embedding": embedding, "project_id": project_id, "schema_version": SEARCH_SCHEMA_VERSION, "dimensions": SEARCH_VECTOR_DIMENSIONS, "limit": limit},
+            parameters={"embedding": embedding, "query": clean_query, "project_id": project_id, "schema_version": SEARCH_SCHEMA_VERSION, "dimensions": SEARCH_VECTOR_DIMENSIONS, "candidate_limit": min(limit * 3, 54)},
         )
-        return [{"moment_id": row[0], "asset_id": row[1], "asset_name": row[2], "object_key": row[3], "content_type": row[4], "folder_id": row[5], "thumbnail_key": row[6], "start": float(row[7]), "end": float(row[8]), "description": row[9], "transcript": row[10], "score": round(float(row[11]), 4)} for row in result.result_rows]
+        rows = result.result_rows
+        if not rows:
+            return []
+        best_vector_score = max(float(row[11]) for row in rows)
+        minimum_score = max(0.5, best_vector_score - 0.16)
+        ranked = [row for row in rows if bool(row[12]) or float(row[11]) >= minimum_score]
+        return [{"moment_id": row[0], "asset_id": row[1], "asset_name": row[2], "object_key": row[3], "content_type": row[4], "folder_id": row[5], "thumbnail_key": row[6], "start": float(row[7]), "end": float(row[8]), "description": row[9], "transcript": row[10], "score": round(min(1, float(row[11]) + (0.08 if row[12] else 0)), 4)} for row in ranked[:limit]]
     finally:
         await client.close()
 
@@ -144,19 +162,19 @@ async def remove_asset_index(*, project_id: str, asset_id: str) -> None:
 
 
 async def embed_query(value: str) -> list[float]:
-    return (await _embed_contents([f"media search query: {value}"]))[0]
+    return (await _embed_contents([value], "RETRIEVAL_QUERY"))[0]
 
 
 async def _embed_documents(documents: list[str]) -> list[list[float]]:
-    return await _embed_contents([f"searchable media moment: {document}" for document in documents])
+    return await _embed_contents(documents, "RETRIEVAL_DOCUMENT")
 
 
-async def _embed_contents(contents: list[str]) -> list[list[float]]:
+async def _embed_contents(contents: list[str], task_type: str) -> list[list[float]]:
     client = genai.Client(vertexai=True, project=settings.google_cloud_project, location=settings.google_cloud_location)
     semaphore = asyncio.Semaphore(4)
     async def embed(content: str) -> list[float]:
         async with semaphore:
-            response = await client.aio.models.embed_content(model=SEARCH_EMBEDDING_MODEL, contents=content, config=types.EmbedContentConfig(output_dimensionality=SEARCH_VECTOR_DIMENSIONS))
+            response = await client.aio.models.embed_content(model=SEARCH_EMBEDDING_MODEL, contents=content, config=types.EmbedContentConfig(task_type=task_type, output_dimensionality=SEARCH_VECTOR_DIMENSIONS))
         values = response.embeddings[0].values if response.embeddings else None
         return _normalized_vector(values)
     try:
@@ -166,123 +184,7 @@ async def _embed_contents(contents: list[str]) -> list[list[float]]:
     return embeddings
 
 
-async def _analyze_moments(object_key: str, name: str, content_type: str, duration: float | None) -> list[MomentDraft]:
-    client = genai.Client(vertexai=True, project=settings.google_cloud_project, location=settings.google_cloud_location)
-    duration_note = f"The media duration is {duration:.3f} seconds." if duration and math.isfinite(duration) else "Infer the media duration."
-    prompt = (
-        "Divide this media into precise, searchable timestamped moments. Each moment should cover one distinct visible action, scene, spoken passage, sound, or music event. "
-        "Use seconds for start and end. Include visible subjects, actions, setting, on-screen text, sounds, music, and accessibility-relevant details. "
-        "For every moment containing speech or lyrics, put the exact spoken or sung words in transcript, including a speaker label when identifiable. Leave transcript empty only when no words are audible. "
-        "Keep each description concise. For an image return one moment with start and end both zero. Do not invent content. Return at most 40 moments. "
-        "Return one JSON object with a moments array. Every moment must contain numeric start and end values plus string description and transcript values. "
-        f"The file is named {name}. {duration_note}"
-    )
-    try:
-        response = await client.aio.models.generate_content(
-            model=SEARCH_ANALYSIS_MODEL,
-            contents=[types.Part.from_uri(file_uri=f"gs://{settings.gcs_bucket}/{object_key}", mime_type=content_type), types.Part.from_text(text=prompt)],
-            config=types.GenerateContentConfig(temperature=0.1, max_output_tokens=8192, response_mime_type="application/json"),
-        )
-    finally:
-        await client.aio.aclose()
-    try:
-        value = json.loads(_json_text(response.text or ""))
-        payload = _normalize_moment_payload(value, duration)
-        analysis = MomentAnalysis.model_validate(payload)
-    except (json.JSONDecodeError, ValueError) as error:
-        detail = str(error).replace("\n", " ")[:350]
-        raise RuntimeError(f"Gemini returned invalid timestamped moments: {detail}") from error
-    moments = []
-    for moment in analysis.moments:
-        if content_type.startswith("image/"):
-            moments.append(moment.model_copy(update={"start": 0.0, "end": 0.0}))
-            continue
-        if moment.end <= moment.start:
-            continue
-        end = min(moment.end, duration) if duration and math.isfinite(duration) else moment.end
-        if end > moment.start:
-            moments.append(moment.model_copy(update={"end": end}))
-    if not moments:
-        raise RuntimeError("Gemini returned no valid searchable moments")
-    return moments[:80]
-
-
-def _json_text(value: str) -> str:
-    clean = value.strip()
-    if clean.startswith("```"):
-        clean = clean.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    return clean
-
-
-def _normalize_moment_payload(value: object, duration: float | None) -> dict[str, object]:
-    if isinstance(value, list):
-        raw_moments = value
-    elif isinstance(value, dict):
-        raw_moments = next((value[key] for key in ("moments", "segments", "scenes") if isinstance(value.get(key), list)), None)
-    else:
-        raw_moments = None
-    if not isinstance(raw_moments, list):
-        raise ValueError("response has no moments array")
-    normalized: list[dict[str, object]] = []
-    for index, item in enumerate(raw_moments):
-        if not isinstance(item, dict):
-            continue
-        start = _seconds(_first(item, "start", "start_time", "startTime", "begin", "begin_time"))
-        end = _seconds(_first(item, "end", "end_time", "endTime", "finish", "finish_time"))
-        if start is None:
-            continue
-        if end is None:
-            next_start = _next_start(raw_moments, index + 1)
-            end = next_start if next_start is not None else duration if duration and math.isfinite(duration) else start
-        transcript = _text(_first(item, "transcript", "speech", "dialogue", "caption"))
-        description = _text(_first(item, "description", "summary", "scene_description", "sceneDescription", "content", "text")) or transcript
-        if not description:
-            continue
-        normalized.append({"start": start, "end": end, "description": description, "transcript": transcript})
-    if not normalized:
-        raise ValueError("response contains no usable moments")
-    return {"moments": normalized}
-
-
-def _first(item: dict[object, object], *keys: str) -> object | None:
-    return next((item[key] for key in keys if key in item), None)
-
-
-def _next_start(items: list[object], index: int) -> float | None:
-    for item in items[index:]:
-        if isinstance(item, dict):
-            value = _seconds(_first(item, "start", "start_time", "startTime", "begin", "begin_time"))
-            if value is not None:
-                return value
-    return None
-
-
-def _seconds(value: object) -> float | None:
-    if isinstance(value, (int, float)) and math.isfinite(float(value)):
-        return max(0.0, float(value))
-    if not isinstance(value, str):
-        return None
-    clean = value.strip().lower().removesuffix("s")
-    try:
-        parts = [float(part) for part in clean.split(":")]
-    except ValueError:
-        return None
-    if len(parts) == 1:
-        return max(0.0, parts[0])
-    if len(parts) > 3:
-        return None
-    return max(0.0, sum(part * (60 ** position) for position, part in enumerate(reversed(parts))))
-
-
-def _text(value: object) -> str:
-    if isinstance(value, str):
-        return value.strip()[:3000]
-    if isinstance(value, list):
-        return " ".join(str(part).strip() for part in value if str(part).strip())[:3000]
-    return ""
-
-
-async def _replace_moments(*, project_id: str, asset_id: str, object_key: str, name: str, content_type: str, folder_id: str, moments: list[MomentDraft], embeddings: list[list[float]], thumbnail_keys: list[str]) -> None:
+async def _replace_moments(*, project_id: str, asset_id: str, object_key: str, name: str, content_type: str, folder_id: str, moments: list[IndexedMoment], embeddings: list[list[float]], thumbnail_keys: list[str]) -> None:
     client = await clickhouse_client()
     try:
         await _ensure_schema(client)
@@ -307,11 +209,11 @@ async def _asset_index_state(project_id: str, asset_id: str) -> tuple[str, str, 
         await client.close()
 
 
-async def _write_index_row(*, project_id: str, asset_id: str, object_key: str, name: str, content_type: str, folder_id: str, status: str, stage: str = "", document: str = "", error: str = "") -> None:
+async def _write_index_row(*, project_id: str, asset_id: str, object_key: str, name: str, content_type: str, folder_id: str, status: str, stage: str = "", document: str = "", silence_ranges: str = "[]", embedding: list[float] | None = None, error: str = "") -> None:
     client = await clickhouse_client()
     try:
         await _ensure_schema(client)
-        await client.insert("asset_search_index", [[project_id, asset_id, object_key, name, content_type, folder_id, status, stage, document, [], SEARCH_EMBEDDING_MODEL, SEARCH_ANALYSIS_MODEL, SEARCH_SCHEMA_VERSION, error, datetime.now(timezone.utc)]], column_names=["project_id", "asset_id", "object_key", "asset_name", "content_type", "folder_id", "status", "stage", "document", "embedding", "embedding_model", "analysis_model", "schema_version", "error", "updated_at"])
+        await client.insert("asset_search_index", [[project_id, asset_id, object_key, name, content_type, folder_id, status, stage, document, silence_ranges, embedding or [], SEARCH_EMBEDDING_MODEL, SEARCH_ANALYSIS_MODEL, SEARCH_SCHEMA_VERSION, error, datetime.now(timezone.utc)]], column_names=["project_id", "asset_id", "object_key", "asset_name", "content_type", "folder_id", "status", "stage", "document", "silence_ranges", "embedding", "embedding_model", "analysis_model", "schema_version", "error", "updated_at"])
     finally:
         await client.close()
 
@@ -323,34 +225,31 @@ async def _ensure_schema(client) -> None:
     async with _schema_lock:
         if _schema_ready:
             return
-        await client.command("""CREATE TABLE IF NOT EXISTS asset_search_index (project_id String, asset_id String, object_key String, asset_name String, content_type LowCardinality(String), folder_id String, status LowCardinality(String), stage LowCardinality(String), document String, embedding Array(Float32), embedding_model LowCardinality(String), analysis_model LowCardinality(String), schema_version UInt16, error String, updated_at DateTime64(3, 'UTC'), INDEX status_values status TYPE set(16) GRANULARITY 1, INDEX document_tokens document TYPE tokenbf_v1(32768, 3, 0) GRANULARITY 1) ENGINE = ReplacingMergeTree(updated_at) ORDER BY (project_id, asset_id)""")
+        await client.command("""CREATE TABLE IF NOT EXISTS asset_search_index (project_id String, asset_id String, object_key String, asset_name String, content_type LowCardinality(String), folder_id String, status LowCardinality(String), stage LowCardinality(String), document String, silence_ranges String, embedding Array(Float32), embedding_model LowCardinality(String), analysis_model LowCardinality(String), schema_version UInt16, error String, updated_at DateTime64(3, 'UTC'), INDEX status_values status TYPE set(16) GRANULARITY 1, INDEX document_tokens document TYPE tokenbf_v1(32768, 3, 0) GRANULARITY 1) ENGINE = ReplacingMergeTree(updated_at) ORDER BY (project_id, asset_id)""")
         await client.command("ALTER TABLE asset_search_index ADD COLUMN IF NOT EXISTS stage LowCardinality(String) AFTER status")
+        await client.command("ALTER TABLE asset_search_index ADD COLUMN IF NOT EXISTS silence_ranges String DEFAULT '[]' AFTER document")
         await client.command("ALTER TABLE asset_search_index ADD INDEX IF NOT EXISTS status_values status TYPE set(16) GRANULARITY 1")
-        await client.command("""CREATE TABLE IF NOT EXISTS asset_search_moments (project_id String, asset_id String, moment_id String, object_key String, asset_name String, content_type LowCardinality(String), folder_id String, thumbnail_key String, start Float64, end Float64, description String, transcript String, embedding Array(Float32), embedding_model LowCardinality(String), analysis_model LowCardinality(String), schema_version UInt16, updated_at DateTime64(3, 'UTC'), INDEX content_type_values content_type TYPE set(16) GRANULARITY 1, INDEX moment_text_tokens description TYPE tokenbf_v1(32768, 3, 0) GRANULARITY 1, INDEX transcript_tokens transcript TYPE tokenbf_v1(32768, 3, 0) GRANULARITY 1) ENGINE = ReplacingMergeTree(updated_at) ORDER BY (project_id, asset_id, moment_id)""")
+        await client.command("""CREATE TABLE IF NOT EXISTS asset_search_moments (project_id String, asset_id String, moment_id String, object_key String, asset_name String, content_type LowCardinality(String), folder_id String, thumbnail_key String, start Float64, end Float64, description String, transcript String, search_text String MATERIALIZED lowerUTF8(concat(asset_name, ' ', description, ' ', transcript)), embedding Array(Float32), embedding_model LowCardinality(String), analysis_model LowCardinality(String), schema_version UInt16, updated_at DateTime64(3, 'UTC'), INDEX content_type_values content_type TYPE set(16) GRANULARITY 1, INDEX moment_text_tokens description TYPE tokenbf_v1(32768, 3, 0) GRANULARITY 1, INDEX transcript_tokens transcript TYPE tokenbf_v1(32768, 3, 0) GRANULARITY 1, INDEX search_text_tokens search_text TYPE tokenbf_v1(32768, 3, 0) GRANULARITY 1) ENGINE = ReplacingMergeTree(updated_at) ORDER BY (project_id, asset_id, moment_id)""")
         await client.command("ALTER TABLE asset_search_moments ADD COLUMN IF NOT EXISTS thumbnail_key String AFTER folder_id")
+        await client.command("ALTER TABLE asset_search_moments ADD COLUMN IF NOT EXISTS search_text String MATERIALIZED lowerUTF8(concat(asset_name, ' ', description, ' ', transcript)) AFTER transcript")
         await client.command("ALTER TABLE asset_search_moments ADD INDEX IF NOT EXISTS content_type_values content_type TYPE set(16) GRANULARITY 1")
         await client.command("ALTER TABLE asset_search_moments ADD INDEX IF NOT EXISTS transcript_tokens transcript TYPE tokenbf_v1(32768, 3, 0) GRANULARITY 1")
+        await client.command("ALTER TABLE asset_search_moments ADD INDEX IF NOT EXISTS search_text_tokens search_text TYPE tokenbf_v1(32768, 3, 0) GRANULARITY 1")
         _schema_ready = True
 
 
-def _render_moment_previews(project_id: str, asset_id: str, object_key: str, content_type: str, moments: list[MomentDraft]) -> list[str]:
-    suffix = mimetypes.guess_extension(content_type) or ".media"
+def _render_moment_previews(source: Path, project_id: str, asset_id: str, content_type: str, moments: list[IndexedMoment]) -> list[str]:
     storage_client = storage.Client(project=settings.google_cloud_project)
     bucket = storage_client.bucket(settings.gcs_bucket)
-    with tempfile.NamedTemporaryFile(prefix="amplifier-search-source-", suffix=suffix, delete=False) as temporary:
-        source = Path(temporary.name)
-    try:
-        bucket.blob(object_key).download_to_filename(source)
-        keys = []
-        for index, moment in enumerate(moments, start=1):
-            digest = hashlib.sha256(f"{asset_id}:{moment.start:.3f}:{moment.end:.3f}:{SEARCH_SCHEMA_VERSION}".encode()).hexdigest()
-            key = f"projects/{project_id}/search/moments/v{SEARCH_SCHEMA_VERSION}/{asset_id}/{index:04d}-{digest[:12]}.jpg"
-            preview = _render_preview(source, content_type, moment.start, moment.end)
-            bucket.blob(key).upload_from_string(preview, content_type="image/jpeg")
-            keys.append(key)
-        return keys
-    finally:
-        source.unlink(missing_ok=True)
+    shared_audio_preview = _render_preview(source, content_type, 0, max((moment.end for moment in moments), default=.25)) if content_type.startswith("audio/") else None
+    keys = []
+    for index, moment in enumerate(moments, start=1):
+        digest = hashlib.sha256(f"{asset_id}:{moment.start:.3f}:{moment.end:.3f}:{SEARCH_SCHEMA_VERSION}".encode()).hexdigest()
+        key = f"projects/{project_id}/search/moments/v{SEARCH_SCHEMA_VERSION}/{asset_id}/{index:04d}-{digest[:12]}.jpg"
+        preview = shared_audio_preview or _render_preview(source, content_type, moment.start, moment.end)
+        bucket.blob(key).upload_from_string(preview, content_type="image/jpeg")
+        keys.append(key)
+    return keys
 
 
 def _render_preview(source: Path, content_type: str, start: float, end: float) -> bytes:
@@ -370,6 +269,18 @@ def _render_preview(source: Path, content_type: str, start: float, end: float) -
         return output.read_bytes()
     finally:
         output.unlink(missing_ok=True)
+
+
+def _download_source(object_key: str, content_type: str) -> Path:
+    suffix = mimetypes.guess_extension(content_type)
+    with tempfile.NamedTemporaryFile(prefix="amplifier-index-source-", suffix=suffix or ".media", delete=False) as temporary:
+        source = Path(temporary.name)
+    try:
+        storage.Client(project=settings.google_cloud_project).bucket(settings.gcs_bucket).blob(object_key).download_to_filename(source)
+        return source
+    except Exception:
+        source.unlink(missing_ok=True)
+        raise
 
 
 def _normalized_vector(values: list[float] | None) -> list[float]:

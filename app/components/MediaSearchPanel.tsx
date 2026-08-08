@@ -26,8 +26,6 @@ type MediaSearchPanelProps = {
 
 export function MediaSearchPanel({ checking, error, failed, files, indexing, onOpen, onRetry, onRetrySkipped, onSkipFailed, query, ready, results, searching, skipped, states, total }: MediaSearchPanelProps) {
   const cleanQuery = query.trim();
-  const queued = Math.max(total - ready - indexing - failed.length - skipped, 0);
-  const progress = [ready && `${ready} ready`, indexing && `${indexing} indexing`, queued && `${queued} queued`, skipped && `${skipped} skipped`].filter(Boolean).join(" · ");
   const searchableFiles = files.filter((file) => !file.pending && file.objectKey && /^(video|audio|image)\//.test(file.type));
   const isChecking = checking || (searchableFiles.length > 0 && searchableFiles.every((file) => states[file.id]?.stage === "Checking"));
 
@@ -42,7 +40,7 @@ export function MediaSearchPanel({ checking, error, failed, files, indexing, onO
   return <section aria-busy={isChecking || searching || indexing > 0} aria-label="Media search results" className={styles.panel}>
     {content}
     <footer aria-live="polite">
-      {isChecking ? <span>Checking existing index</span> : total > 0 && <span title={error}>{ready === total ? `${total} ${total === 1 ? "file" : "files"} searchable` : progress}</span>}
+      {isChecking ? <span>Checking existing index</span> : total > 0 && <span title={error}>{ready === total ? `${total} ${total === 1 ? "file" : "files"} searchable` : "Preparing media search"}</span>}
       {!isChecking && failed.length > 0 && <span className={styles.error} title={failed.map((file) => `${file.name}: ${file.error || "Indexing failed"}`).join("\n")}>{failed.length} failed</span>}
       {!total && <span>Add video, audio, or images to search inside them</span>}
       {!isChecking && failed.length > 0 && <button onClick={() => failed.forEach((file) => onRetry(file.id))} type="button">Retry all</button>}

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MediaAssetState, MediaSearchResult } from "../lib/mediaSearch";
 import type { ProjectFile } from "../types/workspace";
 
-const indexingConcurrency = 2;
+const indexingConcurrency = 4;
 const indexingRequestTimeout = 9 * 60_000;
 const searchDelay = 200;
 
@@ -32,13 +32,15 @@ export function useMediaSearch(projectId: string, files: ProjectFile[], active: 
   useEffect(() => {
     if (!active) return;
     let current = true;
-    setLoadedStatusKey(undefined);
-    setStates(Object.fromEntries(searchableFiles.map((file) => [file.id, { assetId: file.id, name: file.name, status: "indexing" as const, stage: "Checking" }])));
-    const timer = window.setTimeout(() => void loadStatus().then((nextStates) => {
+    const timer = window.setTimeout(() => {
+      setLoadedStatusKey(undefined);
+      setStates(Object.fromEntries(searchableFiles.map((file) => [file.id, { assetId: file.id, name: file.name, status: "indexing" as const, stage: "Checking" }])));
+      void loadStatus().then((nextStates) => {
       if (!current) return;
       setStates(nextStates);
       setLoadedStatusKey(statusKey);
-    }).catch((reason) => { if (current) setError(message(reason)); }));
+      }).catch((reason) => { if (current) setError(message(reason)); });
+    });
     return () => { current = false; window.clearTimeout(timer); };
   }, [active, loadStatus, searchableFiles, statusKey]);
 
@@ -47,7 +49,8 @@ export function useMediaSearch(projectId: string, files: ProjectFile[], active: 
     const activeIndexing = searchableFiles.filter((file) => states[file.id]?.status === "indexing").length;
     if (activeIndexing >= indexingConcurrency) return;
     const available = indexingConcurrency - activeIndexing;
-    const pending = searchableFiles.filter((file) => (states[file.id]?.status === "missing" || !states[file.id] || retrying.has(file.id)) && !indexing.current.has(file.id) && !skipped.has(file.id)).slice(0, available);
+    const candidates = searchableFiles.filter((file) => (states[file.id]?.status === "missing" || !states[file.id] || retrying.has(file.id)) && !indexing.current.has(file.id) && !skipped.has(file.id));
+    const pending = selectPending(candidates, available, searchableFiles.some((file) => file.type.startsWith("video/") && states[file.id]?.status === "indexing"));
     const timers: number[] = [];
     for (const file of pending) {
       indexing.current.add(file.id);
@@ -62,7 +65,7 @@ export function useMediaSearch(projectId: string, files: ProjectFile[], active: 
           if (!response.ok || !response.body) throw new Error(`Could not index ${file.name}`);
           cache.current.clear();
           await readIndexEvents(response.body, (event) => {
-            setStates((current) => ({ ...current, [file.id]: { assetId: file.id, name: file.name, status: event.status, stage: event.progress === undefined ? event.stage : `${event.stage} · ${event.progress}%`, error: event.error } }));
+            setStates((current) => ({ ...current, [file.id]: { assetId: file.id, name: file.name, status: event.status, stage: event.stage, progress: event.progress, error: event.error, updatedAt: event.status === "ready" ? new Date().toISOString() : current[file.id]?.updatedAt } }));
           });
         }).catch((reason) => {
           const error = message(reason);
@@ -143,6 +146,20 @@ function without(values: Set<string>, value: string) {
   const next = new Set(values);
   next.delete(value);
   return next;
+}
+
+function selectPending(files: ProjectFile[], available: number, videoActive: boolean) {
+  const selected: ProjectFile[] = [];
+  let videoAvailable = !videoActive;
+  for (const file of files) {
+    if (selected.length >= available) break;
+    if (file.type.startsWith("video/")) {
+      if (!videoAvailable) continue;
+      videoAvailable = false;
+    }
+    selected.push(file);
+  }
+  return selected;
 }
 
 function message(reason: unknown) {

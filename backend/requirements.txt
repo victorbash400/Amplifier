@@ -4,6 +4,7 @@ google-adk[db]
 aiosqlite
 greenlet
 google-genai
+google-cloud-speech
 google-cloud-storage
 mcp-clickhouse
 python-dotenv
