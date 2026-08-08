@@ -6,6 +6,7 @@ greenlet
 google-genai
 google-cloud-speech
 google-cloud-storage
+google-cloud-texttospeech
 mcp-clickhouse
 python-dotenv
 uvicorn[standard]

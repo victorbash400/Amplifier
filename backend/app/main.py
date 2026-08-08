@@ -8,8 +8,10 @@ from pydantic import BaseModel, Field
 
 from app.agent_stream import branch_session, ensure_session, stream_agent_events
 from app.asset_storage import create_upload_session, delete_asset, open_asset_stream, verify_uploaded_asset
+from app.braille import braille_transcript
 from app.clickhouse import check_clickhouse
-from app.media_search import index_asset, index_status, remove_asset_index, search_assets
+from app.media_search import asset_transcript, index_asset, index_status, remove_asset_index, search_assets
+from app.vision_tools import generate_vision_filter, generate_vision_narration
 
 
 app = FastAPI(title="Amplifier API")
@@ -66,6 +68,35 @@ class MediaIndexRequest(BaseModel):
 class MediaSearchRequest(BaseModel):
     project_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
     query: str = Field(min_length=2, max_length=240)
+
+
+class MediaTranscriptRequest(BaseModel):
+    project_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    asset_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+
+
+class VisionNarrationRequest(BaseModel):
+    project_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    asset_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    source_asset_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    folder_id: str = Field(default="root", min_length=1, max_length=100)
+    action: str = Field(pattern=r"^(audio-description|spoken-text)$")
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+
+
+class VisionFilterRequest(BaseModel):
+    project_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    asset_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    source_asset_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    source_object_key: str = Field(min_length=1, max_length=1024)
+    source_name: str = Field(min_length=1, max_length=255)
+    content_type: str = Field(pattern=r"^(video|image)/")
+    folder_id: str = Field(default="root", min_length=1, max_length=100)
+    action: str = Field(pattern=r"^(contrast|color-safe)$")
+    preset: str | None = Field(default=None, pattern=r"^(red-green|blue-yellow|all-channels)$")
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
 
 
 @app.get("/health")
@@ -202,6 +233,50 @@ async def create_media_index(body: MediaIndexRequest) -> StreamingResponse:
 async def query_media_index(body: MediaSearchRequest) -> dict[str, object]:
     try:
         return {"results": await search_assets(body.project_id, body.query)}
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@app.post("/search/transcript")
+async def read_media_transcript(body: MediaTranscriptRequest) -> dict[str, object]:
+    try:
+        return {"cues": await asset_transcript(body.project_id, body.asset_id)}
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@app.post("/search/braille")
+async def read_braille_transcript(body: MediaTranscriptRequest) -> dict[str, object]:
+    try:
+        return await braille_transcript(body.project_id, body.asset_id)
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@app.post("/vision/narration")
+async def create_vision_narration(body: VisionNarrationRequest) -> dict[str, object]:
+    if body.end <= body.start:
+        raise HTTPException(status_code=400, detail="The selected clip range is invalid")
+    try:
+        return {"asset": await generate_vision_narration(project_id=body.project_id, asset_id=body.asset_id, source_asset_id=body.source_asset_id, folder_id=body.folder_id, action=body.action, start=body.start, end=body.end)}
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@app.post("/vision/filter")
+async def create_vision_filter(body: VisionFilterRequest) -> dict[str, object]:
+    if body.end <= body.start:
+        raise HTTPException(status_code=400, detail="The selected clip range is invalid")
+    if body.action == "color-safe" and not body.preset:
+        raise HTTPException(status_code=400, detail="Choose a colour-safe filter")
+    try:
+        return {"asset": await generate_vision_filter(project_id=body.project_id, asset_id=body.asset_id, source_asset_id=body.source_asset_id, source_object_key=body.source_object_key, source_name=body.source_name, content_type=body.content_type, folder_id=body.folder_id, action=body.action, preset=body.preset, start=body.start, end=body.end)}
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:

@@ -150,6 +150,30 @@ async def search_assets(project_id: str, query: str, limit: int = 18) -> list[di
         await client.close()
 
 
+async def asset_transcript(project_id: str, asset_id: str) -> list[dict[str, object]]:
+    client = await clickhouse_client()
+    try:
+        await _ensure_schema(client)
+        result = await client.query(
+            """
+            SELECT moment_id, start, end, transcript
+            FROM asset_search_moments FINAL
+            WHERE project_id = {project_id:String} AND asset_id = {asset_id:String}
+              AND schema_version = {schema_version:UInt16} AND notEmpty(transcript)
+              AND asset_id IN (
+                SELECT asset_id FROM asset_search_index FINAL
+                WHERE project_id = {project_id:String} AND status = 'ready'
+                  AND schema_version = {schema_version:UInt16}
+              )
+            ORDER BY start
+            """,
+            parameters={"project_id": project_id, "asset_id": asset_id, "schema_version": SEARCH_SCHEMA_VERSION},
+        )
+        return [{"id": row[0], "start": float(row[1]), "end": float(row[2]), "text": row[3]} for row in result.result_rows]
+    finally:
+        await client.close()
+
+
 async def remove_asset_index(*, project_id: str, asset_id: str) -> None:
     client = await clickhouse_client()
     try:

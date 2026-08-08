@@ -10,12 +10,13 @@ import { assetUrl, readMediaDuration } from "../lib/assetUploads";
 import { deleteTimelineClip, moveTimelineClip, snapTimelineTime, splitTimelineClip, trimTimelineClip } from "../lib/timelineOperations";
 import { TimelineClipItem, type TimelineClipHandlers } from "./TimelineClipItem";
 import { TimelineModeSwitcher, type TimelineMode } from "./TimelineModeSwitcher";
-import { TimelineAccessibilityTools } from "./TimelineAccessibilityTools";
+import { TimelineAccessibilityTools, type VisionColorPreset, type VisionToolAction } from "./TimelineAccessibilityTools";
+import { TimelineClipVolumeControl } from "./TimelineClipVolumeControl";
 import { TimelineHorizontalScrollbar } from "./TimelineHorizontalScrollbar";
 import { TimelineRuler, formatTimecode } from "./TimelineRuler";
 import { TimelineTrackHeaders } from "./TimelineTrackHeaders";
 import { buildTimelineTracks, firstEmptyTrackLane, type TimelineTrack, type TimelineTrackCounts } from "./timelineTracks";
-import type { TimelineClip } from "./timelineTypes";
+import type { TimelineCaptionTrack, TimelineClip } from "./timelineTypes";
 import styles from "./TimelinePanel.module.css";
 import type { CreatorAgentId } from "./creatorAgentTypes";
 
@@ -23,11 +24,13 @@ const baseDuration = 20;
 const trailingRoom = 8;
 
 type TimelinePanelProps = {
+  captionTrack?: TimelineCaptionTrack;
   clips: TimelineClip[];
   error?: string;
   files: ProjectFile[];
   onClipsChange: (clips: TimelineClip[]) => void;
   onAskAgent: (agentId: CreatorAgentId, contextNames: string[]) => void;
+  onCaptionsChange: (captions?: TimelineCaptionTrack) => void;
   onFilesChange: (files: ProjectFile[]) => void;
   onPlayingChange: (playing: boolean) => void;
   onTimeChange: (time: number) => void;
@@ -37,7 +40,7 @@ type TimelinePanelProps = {
   trackCounts: TimelineTrackCounts;
 };
 
-export function TimelinePanel({ clips, error, files, onAskAgent, onClipsChange, onFilesChange, onPlayingChange, onTimeChange, onTrackCountsChange, playing, time, trackCounts }: TimelinePanelProps) {
+export function TimelinePanel({ captionTrack, clips, error, files, onAskAgent, onCaptionsChange, onClipsChange, onFilesChange, onPlayingChange, onTimeChange, onTrackCountsChange, playing, time, trackCounts }: TimelinePanelProps) {
   const canvasRef = useRef<HTMLElement>(null);
   const viewportRef = useRef<HTMLElement>(null);
   const dragOffset = useRef(0);
@@ -57,6 +60,9 @@ export function TimelinePanel({ clips, error, files, onAskAgent, onClipsChange, 
   const [editingTracks, setEditingTracks] = useState<TimelineTrack[]>();
   const [divider, setDivider] = useState(50);
   const [mode, setMode] = useState<TimelineMode>("edit");
+  const [visionWorking, setVisionWorking] = useState<VisionToolAction>();
+  const [visionClipId, setVisionClipId] = useState<string>();
+  const [visionError, setVisionError] = useState<string>();
   const timelineDuration = Math.max(baseDuration, ...clips.map((clip) => clip.start + clip.duration + trailingRoom));
   const contentDuration = Math.max(0, ...clips.map((clip) => clip.start + clip.duration));
   const tracks = editingTracks ?? buildTimelineTracks(clips, dropActive, clips, trackCounts);
@@ -267,6 +273,63 @@ export function TimelinePanel({ clips, error, files, onAskAgent, onClipsChange, 
     if (rect) setDivider(Math.max(25, Math.min(75, ((event.clientY - rect.top) / rect.height) * 100)));
   }
 
+  function setClipVolume(value: number) {
+    if (!selectedClip || selectedClip.role !== "audio") return;
+    onClipsChange(clips.map((clip) => clip.id === selectedClip.id ? { ...clip, volume: value } : clip));
+  }
+
+  function setClipContrast(value: number) {
+    const visual = selectedGroup.find((clip) => clip.role === "visual");
+    if (!visual) return;
+    const contrast = Math.abs(value - 1) < .01 ? undefined : value;
+    const visionAdjustments = { ...visual.visionAdjustments, contrast };
+    onClipsChange(clips.map((clip) => clip.id === visual.id ? { ...clip, visionAdjustments } : clip));
+  }
+
+  async function runVisionTool(action: VisionToolAction, preset?: VisionColorPreset) {
+    const visual = selectedGroup.find((clip) => clip.role === "visual");
+    if (!visual) return;
+    if (action === "color-safe") {
+      const visionAdjustments = { ...visual.visionAdjustments, colorPreset: preset };
+      commit(clips.map((clip) => clip.id === visual.id ? { ...clip, visionAdjustments } : clip));
+      return;
+    }
+    setVisionError(undefined);
+    setVisionWorking(action);
+    setVisionClipId(visual.id);
+    try {
+      if ((action === "transcript" || action === "braille") && captionTrack?.clipId === visual.id && captionTrack.kind === action) {
+        onCaptionsChange(undefined);
+        return;
+      }
+      if (action === "larger-text" && captionTrack?.clipId === visual.id) {
+        onCaptionsChange({ ...captionTrack, large: action === "larger-text" ? !captionTrack.large : captionTrack.large });
+        return;
+      }
+      if (action === "transcript" || action === "braille" || action === "larger-text") {
+        const kind = action === "braille" ? "braille" : "transcript";
+        const response = await fetch("/api/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: kind, projectId: visual.asset.projectId, assetId: visual.asset.id }) });
+        const body = await response.json() as { cues?: TimelineCaptionTrack["cues"]; brf?: string; error?: string };
+        if (!response.ok || !body.cues) throw new Error(body.error || "Could not load transcript");
+        onCaptionsChange({ clipId: visual.id, cues: body.cues, large: action === "larger-text", kind, downloadText: body.brf });
+        return;
+      }
+      const assetId = crypto.randomUUID();
+      const response = await fetch("/api/vision", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, projectId: visual.asset.projectId, assetId, sourceAssetId: visual.asset.id, folderId: visual.asset.folderId, start: visual.trimStart, end: visual.trimStart + visual.duration }) });
+      const body = await response.json() as { asset?: ProjectFile; error?: string };
+      if (!response.ok || !body.asset?.duration) throw new Error(body.error || "Could not generate narration");
+      const lane = firstEmptyTrackLane(clips, "audio");
+      keepTrack("audio", lane);
+      onFilesChange([...files, body.asset]);
+      commit([...clips, { id: crypto.randomUUID(), asset: body.asset, start: visual.start, duration: body.asset.duration, lane, sourceDuration: body.asset.duration, trimStart: 0, role: "audio", volume: 1 }]);
+    } catch (reason) {
+      setVisionError(reason instanceof Error ? reason.message : "Vision tool failed");
+    } finally {
+      setVisionWorking(undefined);
+      setVisionClipId(undefined);
+    }
+  }
+
   useTimelineShortcuts({ onDelete: deleteSelected, onDeselect: () => setSelectedId(undefined), onFit: fitTimeline, onRedo: redo, onSeek: (change) => onTimeChange(Math.max(0, Math.min(contentDuration, time + change))), onSetPlaying: onPlayingChange, onSplit: splitSelected, onTogglePlayback: () => onPlayingChange(!playing), onToggleSnapping: () => setSnapping((value) => !value), onUndo: undo, onZoom: (change) => setScale((value) => Math.max(1, Math.min(8, value + change))) });
 
   const clipHandlers: TimelineClipHandlers = { onBeginEdit: beginEdit, onEndEdit: finishEdit, onMove: moveClip, onSelect: setSelectedId, onTrim: trimClip };
@@ -277,7 +340,8 @@ export function TimelinePanel({ clips, error, files, onAskAgent, onClipsChange, 
         <section className={styles.toolGroup}>
           <strong>{modeLabel}</strong>
           <button aria-label={`Ask ${modeLabel} Agent`} className={styles.askAgent} onClick={() => onAskAgent(mode, selectedClip ? [selectedClip.asset.name] : [])} title={`Ask ${modeLabel} Agent`} type="button"><SquarePen size={15} /></button>
-          {mode !== "edit" ? <TimelineAccessibilityTools clipSelected={modeClipSelected} mode={mode} /> : <nav aria-label="Timeline edit tools">
+          {mode !== "edit" && <button aria-label="Delete selected clip" disabled={!selectedId || Boolean(visionWorking)} onClick={() => deleteSelected()} title="Delete selected clip" type="button"><Trash2 size={15} /></button>}
+          {mode !== "edit" ? <TimelineAccessibilityTools clipSelected={modeClipSelected} mode={mode} onContrastChange={mode === "vision" ? setClipContrast : undefined} onVisionAction={mode === "vision" ? (action, preset) => void runVisionTool(action, preset) : undefined} visionAdjustments={selectedGroup.find((clip) => clip.role === "visual")?.visionAdjustments} working={visionWorking} /> : <nav aria-label="Timeline edit tools">
             <button aria-label="Select" type="button"><MousePointer2 size={15} /></button>
             <button aria-keyshortcuts="Meta+Z Control+Z" aria-label="Undo" disabled={!undoCount} onClick={undo} type="button"><Undo2 size={15} /></button>
             <button aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z" aria-label="Redo" disabled={!redoCount} onClick={redo} type="button"><Redo2 size={15} /></button>
@@ -288,10 +352,10 @@ export function TimelinePanel({ clips, error, files, onAskAgent, onClipsChange, 
           </nav>}
         </section>
         <section className={styles.playback}><button aria-keyshortcuts="Space" aria-label={playing ? "Pause" : "Play"} onClick={() => onPlayingChange(!playing)} type="button">{playing ? <Pause size={16} /> : <Play size={16} />}</button><time>{formatTimecode(time)}</time></section>
-        <section className={styles.toolGroup} data-end><nav aria-label="Timeline view"><button aria-keyshortcuts="-" aria-label="Zoom out" disabled={scale <= 1} onClick={() => setScale((value) => Math.max(1, value - 1))} type="button"><ZoomOut size={15} /></button><button aria-keyshortcuts="0" aria-label="Fit timeline" onClick={fitTimeline} type="button"><Maximize2 size={15} /></button><button aria-keyshortcuts="+" aria-label="Zoom in" disabled={scale >= 8} onClick={() => setScale((value) => Math.min(8, value + 1))} type="button"><ZoomIn size={15} /></button></nav></section>
+        <section className={styles.toolGroup} data-end>{selectedClip?.role === "audio" && <TimelineClipVolumeControl name={selectedClip.asset.name} onChange={setClipVolume} value={selectedClip.volume ?? 1} />}<nav aria-label="Timeline view"><button aria-keyshortcuts="-" aria-label="Zoom out" disabled={scale <= 1} onClick={() => setScale((value) => Math.max(1, value - 1))} type="button"><ZoomOut size={15} /></button><button aria-keyshortcuts="0" aria-label="Fit timeline" onClick={fitTimeline} type="button"><Maximize2 size={15} /></button><button aria-keyshortcuts="+" aria-label="Zoom in" disabled={scale >= 8} onClick={() => setScale((value) => Math.min(8, value + 1))} type="button"><ZoomIn size={15} /></button></nav></section>
       </header>
       <section className={styles.composition}>
-        {(dropError || error) && <p className={styles.dropError} role="alert">{dropError || error}</p>}
+        {(dropError || visionError || error) && <p className={styles.dropError} role="alert">{dropError || visionError || error}</p>}
         <section className={styles.trackLayout} style={{ "--av-divider": `${divider}%`, "--track-count": tracks.length } as CSSProperties}>
           <time className={styles.timelineTimecode}>{formatTimecode(time)}</time>
           <TimelineTrackHeaders clips={clips} tracks={tracks} />
@@ -299,7 +363,7 @@ export function TimelinePanel({ clips, error, files, onAskAgent, onClipsChange, 
             <section className={styles.timelineCanvas} style={{ "--timeline-scale": scale } as CSSProperties}>
               <TimelineRuler duration={timelineDuration} scale={scale} />
               <section aria-label="Editable timeline" className={styles.canvas} onDragEnter={() => setDropActive(true)} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropActive(false); }} onDragOver={(event) => event.preventDefault()} onDrop={dropAsset} onPointerDown={startScrub} onPointerMove={scrub} ref={canvasRef}>
-                {clips.map((clip) => <TimelineClipItem clip={clip} dragOffsetRef={dragOffset} handlers={clipHandlers} key={clip.id} selected={clip.id === selectedId} timelineDuration={timelineDuration} />)}
+                {clips.map((clip) => <TimelineClipItem clip={clip} dragOffsetRef={dragOffset} handlers={clipHandlers} key={clip.id} processing={clip.id === visionClipId} selected={clip.id === selectedId} timelineDuration={timelineDuration} />)}
                 {!clips.length && <p className={styles.empty}>Drag media here</p>}
                 <button aria-label="Resize video and audio track areas" className={styles.avDivider} onPointerDown={resizeDivider} onPointerMove={resizeDivider} type="button" />
                 <i aria-hidden="true" className={styles.playhead} style={{ left: `${(time / timelineDuration) * 100}%` }} />
@@ -315,5 +379,5 @@ export function TimelinePanel({ clips, error, files, onAskAgent, onClipsChange, 
 }
 
 function sameClips(left: TimelineClip[], right: TimelineClip[]) {
-  return left === right || left.length === right.length && left.every((clip, index) => clip === right[index] || clip.id === right[index]?.id && clip.start === right[index]?.start && clip.duration === right[index]?.duration && clip.lane === right[index]?.lane && clip.trimStart === right[index]?.trimStart && clip.linkId === right[index]?.linkId);
+  return left === right || left.length === right.length && left.every((clip, index) => clip === right[index] || clip.id === right[index]?.id && clip.start === right[index]?.start && clip.duration === right[index]?.duration && clip.lane === right[index]?.lane && clip.trimStart === right[index]?.trimStart && clip.linkId === right[index]?.linkId && clip.volume === right[index]?.volume);
 }

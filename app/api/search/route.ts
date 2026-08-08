@@ -11,13 +11,20 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const body = await request.json() as { action?: "index" | "search"; projectId?: string; assetId?: string; objectKey?: string; name?: string; contentType?: string; folderId?: string; duration?: number; force?: boolean; query?: string };
+  const body = await request.json() as { action?: "index" | "search" | "transcript" | "braille"; projectId?: string; assetId?: string; objectKey?: string; name?: string; contentType?: string; folderId?: string; duration?: number; force?: boolean; query?: string };
   if (!body.projectId || !body.action) return Response.json({ error: "Media search request details are required" }, { status: 400 });
   if (body.action === "search") {
     return proxy(new URL(`${backendUrl.replace(/\/$/, "")}/search/query`), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ project_id: body.projectId, query: body.query }),
+    });
+  }
+  if (body.action === "transcript" || body.action === "braille") {
+    return proxy(new URL(`${backendUrl.replace(/\/$/, "")}/search/${body.action}`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project_id: body.projectId, asset_id: body.assetId }),
     });
   }
   const response = await fetch(new URL(`${backendUrl.replace(/\/$/, "")}/search/index`), {
