@@ -30,6 +30,8 @@ export type ProjectFile = {
   height?: number;
   hasAudio?: boolean;
   audioProbe?: "ffprobe";
+  accessibilitySourceId?: string;
+  noiseReduction?: number;
 };
 
 export type WorkspaceData = {

@@ -10,13 +10,14 @@ import { assetUrl, readMediaDuration } from "../lib/assetUploads";
 import { deleteTimelineClip, moveTimelineClip, snapTimelineTime, splitTimelineClip, trimTimelineClip } from "../lib/timelineOperations";
 import { TimelineClipItem, type TimelineClipHandlers } from "./TimelineClipItem";
 import { TimelineModeSwitcher, type TimelineMode } from "./TimelineModeSwitcher";
-import { TimelineAccessibilityTools, type VisionColorPreset, type VisionToolAction } from "./TimelineAccessibilityTools";
+import { TimelineAccessibilityTools, type HearingToolAction, type VisionColorPreset, type VisionToolAction } from "./TimelineAccessibilityTools";
+import type { AslSource } from "./TimelineAslSourcePicker";
 import { TimelineClipVolumeControl } from "./TimelineClipVolumeControl";
 import { TimelineHorizontalScrollbar } from "./TimelineHorizontalScrollbar";
 import { TimelineRuler, formatTimecode } from "./TimelineRuler";
 import { TimelineTrackHeaders } from "./TimelineTrackHeaders";
 import { buildTimelineTracks, firstEmptyTrackLane, type TimelineTrack, type TimelineTrackCounts } from "./timelineTracks";
-import type { TimelineCaptionTrack, TimelineClip } from "./timelineTypes";
+import type { TimelineAslTrack, TimelineCaptionTrack, TimelineClip } from "./timelineTypes";
 import styles from "./TimelinePanel.module.css";
 import type { CreatorAgentId } from "./creatorAgentTypes";
 
@@ -24,12 +25,14 @@ const baseDuration = 20;
 const trailingRoom = 8;
 
 type TimelinePanelProps = {
+  aslTrack?: TimelineAslTrack;
   captionTrack?: TimelineCaptionTrack;
   clips: TimelineClip[];
   error?: string;
   files: ProjectFile[];
   onClipsChange: (clips: TimelineClip[]) => void;
   onAskAgent: (agentId: CreatorAgentId, contextNames: string[]) => void;
+  onAslChange: (track?: TimelineAslTrack) => void;
   onCaptionsChange: (captions?: TimelineCaptionTrack) => void;
   onFilesChange: (files: ProjectFile[]) => void;
   onPlayingChange: (playing: boolean) => void;
@@ -40,7 +43,7 @@ type TimelinePanelProps = {
   trackCounts: TimelineTrackCounts;
 };
 
-export function TimelinePanel({ captionTrack, clips, error, files, onAskAgent, onCaptionsChange, onClipsChange, onFilesChange, onPlayingChange, onTimeChange, onTrackCountsChange, playing, time, trackCounts }: TimelinePanelProps) {
+export function TimelinePanel({ aslTrack, captionTrack, clips, error, files, onAskAgent, onAslChange, onCaptionsChange, onClipsChange, onFilesChange, onPlayingChange, onTimeChange, onTrackCountsChange, playing, time, trackCounts }: TimelinePanelProps) {
   const canvasRef = useRef<HTMLElement>(null);
   const viewportRef = useRef<HTMLElement>(null);
   const dragOffset = useRef(0);
@@ -61,6 +64,7 @@ export function TimelinePanel({ captionTrack, clips, error, files, onAskAgent, o
   const [divider, setDivider] = useState(50);
   const [mode, setMode] = useState<TimelineMode>("edit");
   const [visionWorking, setVisionWorking] = useState<VisionToolAction>();
+  const [hearingWorking, setHearingWorking] = useState<HearingToolAction>();
   const [visionClipId, setVisionClipId] = useState<string>();
   const [visionError, setVisionError] = useState<string>();
   const timelineDuration = Math.max(baseDuration, ...clips.map((clip) => clip.start + clip.duration + trailingRoom));
@@ -70,6 +74,7 @@ export function TimelinePanel({ captionTrack, clips, error, files, onAskAgent, o
   const selectedGroup = selectedClip?.linkId ? clips.filter((clip) => clip.linkId === selectedClip.linkId) : selectedClip ? [selectedClip] : [];
   const selectedHasVisual = selectedGroup.some((clip) => clip.role === "visual");
   const selectedHasAudio = selectedGroup.some((clip) => clip.role === "audio");
+  const selectedHearingMedia = selectedGroup.some((clip) => clip.asset.type.startsWith("audio/") || clip.asset.type.startsWith("video/"));
   const modeClipSelected = mode === "vision" || mode === "vision-cognitive" ? selectedHasVisual : mode === "hearing" || mode === "hearing-cognitive" ? selectedHasAudio : Boolean(selectedClip);
   const modeLabel = mode === "vision-cognitive" ? "Vision + Cognitive" : mode === "hearing-cognitive" ? "Hearing + Cognitive" : mode === "deafblind-cognitive" ? "Deafblind + Cognitive" : `${mode.charAt(0).toUpperCase()}${mode.slice(1)}`;
 
@@ -308,7 +313,9 @@ export function TimelinePanel({ captionTrack, clips, error, files, onAskAgent, o
       }
       if (action === "transcript" || action === "braille" || action === "larger-text") {
         const kind = action === "braille" ? "braille" : "transcript";
-        const response = await fetch("/api/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: kind, projectId: visual.asset.projectId, assetId: visual.asset.id }) });
+        const sourceAssetId = visual.asset.accessibilitySourceId ?? visual.asset.id;
+        const sourceAsset = files.find((file) => file.id === sourceAssetId) ?? visual.asset;
+        const response = await fetch("/api/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: kind, projectId: visual.asset.projectId, assetId: sourceAssetId, objectKey: sourceAsset.objectKey }) });
         const body = await response.json() as { cues?: TimelineCaptionTrack["cues"]; brf?: string; error?: string };
         if (!response.ok || !body.cues) throw new Error(body.error || "Could not load transcript");
         onCaptionsChange({ clipId: visual.id, cues: body.cues, large: action === "larger-text", kind, downloadText: body.brf });
@@ -330,6 +337,70 @@ export function TimelinePanel({ captionTrack, clips, error, files, onAskAgent, o
     }
   }
 
+  async function runHearingTool(action: HearingToolAction, source?: AslSource) {
+    const target = selectedGroup.find((clip) => clip.role === "visual") ?? selectedGroup.find((clip) => clip.role === "audio");
+    if (!target || action === "noise-reduce") return;
+    setVisionError(undefined);
+    setHearingWorking(action);
+    setVisionClipId(target.id);
+    try {
+      if (action === "captions" || action === "transcript") {
+        if (captionTrack?.clipId === target.id && captionTrack.kind === action) {
+          onCaptionsChange(undefined);
+          return;
+        }
+        const sourceAssetId = target.asset.accessibilitySourceId ?? target.asset.id;
+        const sourceAsset = files.find((file) => file.id === sourceAssetId) ?? target.asset;
+        const response = await fetch("/api/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "transcript", projectId: target.asset.projectId, assetId: sourceAssetId, objectKey: sourceAsset.objectKey }) });
+        const body = await response.json() as { cues?: TimelineCaptionTrack["cues"]; error?: string };
+        if (!response.ok || !body.cues?.length) throw new Error(body.error || "Could not load transcript");
+        onCaptionsChange({ clipId: target.id, cues: body.cues, large: false, kind: action });
+        return;
+      }
+      const visual = selectedGroup.find((clip) => clip.role === "visual");
+      if (!visual || action !== "asl" || !source) return;
+      if (aslTrack?.clipId === visual.id) {
+        onAslChange(undefined);
+        return;
+      }
+      const attachedTranscript = source === "transcript" && captionTrack?.clipId === visual.id && captionTrack.kind === "transcript" ? captionTrack.cues : undefined;
+      const sourceAssetId = visual.asset.accessibilitySourceId ?? visual.asset.id;
+      const sourceAsset = files.find((file) => file.id === sourceAssetId) ?? visual.asset;
+      const response = await fetch("/api/hearing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, source, cues: attachedTranscript, projectId: visual.asset.projectId, assetId: sourceAssetId, sourceObjectKey: sourceAsset.objectKey, start: visual.trimStart, end: visual.trimStart + visual.duration }) });
+      const body = await response.json() as { cues?: TimelineAslTrack["cues"]; error?: string };
+      if (!response.ok || !body.cues?.length) throw new Error(body.error || "Could not generate ASL interpretation");
+      onAslChange({ clipId: visual.id, cues: body.cues, placement: { x: 1, y: 1 } });
+    } catch (reason) {
+      setVisionError(reason instanceof Error ? reason.message : "ASL generation failed");
+    } finally {
+      setHearingWorking(undefined);
+      setVisionClipId(undefined);
+    }
+  }
+
+  async function runNoiseReduction(strength: number) {
+    const target = selectedGroup.find((clip) => clip.role === "audio") ?? selectedGroup.find((clip) => clip.role === "visual");
+    if (!target) return;
+    const sourceAssetId = target.asset.accessibilitySourceId ?? target.asset.id;
+    const sourceAsset = files.find((file) => file.id === sourceAssetId) ?? target.asset;
+    if (!sourceAsset.objectKey) return setVisionError("The selected clip is not uploaded");
+    setVisionError(undefined);
+    setHearingWorking("noise-reduce");
+    setVisionClipId(target.id);
+    try {
+      const response = await fetch("/api/hearing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "noise-reduce", projectId: target.asset.projectId, assetId: crypto.randomUUID(), sourceAssetId, sourceObjectKey: sourceAsset.objectKey, sourceName: sourceAsset.name, contentType: sourceAsset.type, folderId: target.asset.folderId, duration: target.asset.duration, strength }) });
+      const body = await response.json() as { asset?: ProjectFile; error?: string };
+      if (!response.ok || !body.asset) throw new Error(body.error || "Could not reduce background noise");
+      onFilesChange([...files, body.asset]);
+      commit(clips.map((clip) => clip.id === target.id ? { ...clip, asset: body.asset as ProjectFile } : clip));
+    } catch (reason) {
+      setVisionError(reason instanceof Error ? reason.message : "Noise reduction failed");
+    } finally {
+      setHearingWorking(undefined);
+      setVisionClipId(undefined);
+    }
+  }
+
   useTimelineShortcuts({ onDelete: deleteSelected, onDeselect: () => setSelectedId(undefined), onFit: fitTimeline, onRedo: redo, onSeek: (change) => onTimeChange(Math.max(0, Math.min(contentDuration, time + change))), onSetPlaying: onPlayingChange, onSplit: splitSelected, onTogglePlayback: () => onPlayingChange(!playing), onToggleSnapping: () => setSnapping((value) => !value), onUndo: undo, onZoom: (change) => setScale((value) => Math.max(1, Math.min(8, value + change))) });
 
   const clipHandlers: TimelineClipHandlers = { onBeginEdit: beginEdit, onEndEdit: finishEdit, onMove: moveClip, onSelect: setSelectedId, onTrim: trimClip };
@@ -340,8 +411,8 @@ export function TimelinePanel({ captionTrack, clips, error, files, onAskAgent, o
         <section className={styles.toolGroup}>
           <strong>{modeLabel}</strong>
           <button aria-label={`Ask ${modeLabel} Agent`} className={styles.askAgent} onClick={() => onAskAgent(mode, selectedClip ? [selectedClip.asset.name] : [])} title={`Ask ${modeLabel} Agent`} type="button"><SquarePen size={15} /></button>
-          {mode !== "edit" && <button aria-label="Delete selected clip" disabled={!selectedId || Boolean(visionWorking)} onClick={() => deleteSelected()} title="Delete selected clip" type="button"><Trash2 size={15} /></button>}
-          {mode !== "edit" ? <TimelineAccessibilityTools clipSelected={modeClipSelected} mode={mode} onContrastChange={mode === "vision" ? setClipContrast : undefined} onVisionAction={mode === "vision" ? (action, preset) => void runVisionTool(action, preset) : undefined} visionAdjustments={selectedGroup.find((clip) => clip.role === "visual")?.visionAdjustments} working={visionWorking} /> : <nav aria-label="Timeline edit tools">
+          {mode !== "edit" && <button aria-label="Delete selected clip" disabled={!selectedId || Boolean(visionWorking || hearingWorking)} onClick={() => deleteSelected()} title="Delete selected clip" type="button"><Trash2 size={15} /></button>}
+          {mode !== "edit" ? <TimelineAccessibilityTools clipSelected={mode === "hearing" ? selectedHearingMedia : modeClipSelected} mode={mode} noiseReduction={selectedClip?.asset.noiseReduction} onContrastChange={mode === "vision" ? setClipContrast : undefined} onHearingAction={mode === "hearing" ? (action, source) => void runHearingTool(action, source) : undefined} onNoiseReduction={mode === "hearing" ? (value) => void runNoiseReduction(value) : undefined} onVisionAction={mode === "vision" ? (action, preset) => void runVisionTool(action, preset) : undefined} visionAdjustments={selectedGroup.find((clip) => clip.role === "visual")?.visionAdjustments} working={mode === "hearing" ? hearingWorking : visionWorking} /> : <nav aria-label="Timeline edit tools">
             <button aria-label="Select" type="button"><MousePointer2 size={15} /></button>
             <button aria-keyshortcuts="Meta+Z Control+Z" aria-label="Undo" disabled={!undoCount} onClick={undo} type="button"><Undo2 size={15} /></button>
             <button aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z" aria-label="Redo" disabled={!redoCount} onClick={redo} type="button"><Redo2 size={15} /></button>
@@ -379,5 +450,5 @@ export function TimelinePanel({ captionTrack, clips, error, files, onAskAgent, o
 }
 
 function sameClips(left: TimelineClip[], right: TimelineClip[]) {
-  return left === right || left.length === right.length && left.every((clip, index) => clip === right[index] || clip.id === right[index]?.id && clip.start === right[index]?.start && clip.duration === right[index]?.duration && clip.lane === right[index]?.lane && clip.trimStart === right[index]?.trimStart && clip.linkId === right[index]?.linkId && clip.volume === right[index]?.volume);
+  return left === right || left.length === right.length && left.every((clip, index) => clip === right[index] || clip.id === right[index]?.id && clip.asset.id === right[index]?.asset.id && clip.start === right[index]?.start && clip.duration === right[index]?.duration && clip.lane === right[index]?.lane && clip.trimStart === right[index]?.trimStart && clip.linkId === right[index]?.linkId && clip.volume === right[index]?.volume);
 }

@@ -7,10 +7,13 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.agent_stream import branch_session, ensure_session, stream_agent_events
+from app.asl_tools import generate_asl_track
 from app.asset_storage import create_upload_session, delete_asset, open_asset_stream, verify_uploaded_asset
 from app.braille import braille_transcript
 from app.clickhouse import check_clickhouse
+from app.hearing_tools import reduce_background_noise
 from app.media_search import asset_transcript, index_asset, index_status, remove_asset_index, search_assets
+from app.transcript_service import transcript_for_asset
 from app.vision_tools import generate_vision_filter, generate_vision_narration
 
 
@@ -73,6 +76,7 @@ class MediaSearchRequest(BaseModel):
 class MediaTranscriptRequest(BaseModel):
     project_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
     asset_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    object_key: str | None = Field(default=None, max_length=1024)
 
 
 class VisionNarrationRequest(BaseModel):
@@ -97,6 +101,35 @@ class VisionFilterRequest(BaseModel):
     preset: str | None = Field(default=None, pattern=r"^(red-green|blue-yellow|all-channels)$")
     start: float = Field(ge=0)
     end: float = Field(gt=0)
+
+
+class AslSourceCue(BaseModel):
+    id: str = Field(min_length=1, max_length=100)
+    start: float = Field(ge=0)
+    end: float = Field(ge=0)
+    text: str = Field(min_length=1, max_length=2000)
+
+
+class AslTrackRequest(BaseModel):
+    project_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    asset_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    source: str = Field(pattern=r"^(transcript|description)$")
+    cues: list[AslSourceCue] | None = Field(default=None, max_length=100)
+    source_object_key: str | None = Field(default=None, max_length=1024)
+
+
+class NoiseReductionRequest(BaseModel):
+    project_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    asset_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    source_asset_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    source_object_key: str = Field(min_length=1, max_length=1024)
+    source_name: str = Field(min_length=1, max_length=255)
+    content_type: str = Field(pattern=r"^(video|audio)/")
+    folder_id: str = Field(default="root", min_length=1, max_length=100)
+    strength: float = Field(ge=0, le=1)
+    duration: float | None = Field(default=None, ge=0)
 
 
 @app.get("/health")
@@ -242,7 +275,9 @@ async def query_media_index(body: MediaSearchRequest) -> dict[str, object]:
 @app.post("/search/transcript")
 async def read_media_transcript(body: MediaTranscriptRequest) -> dict[str, object]:
     try:
-        return {"cues": await asset_transcript(body.project_id, body.asset_id)}
+        return {"cues": await transcript_for_asset(body.project_id, body.asset_id, body.object_key)}
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
 
@@ -250,7 +285,7 @@ async def read_media_transcript(body: MediaTranscriptRequest) -> dict[str, objec
 @app.post("/search/braille")
 async def read_braille_transcript(body: MediaTranscriptRequest) -> dict[str, object]:
     try:
-        return await braille_transcript(body.project_id, body.asset_id)
+        return await braille_transcript(body.project_id, body.asset_id, body.object_key)
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except Exception as error:
@@ -277,6 +312,29 @@ async def create_vision_filter(body: VisionFilterRequest) -> dict[str, object]:
         raise HTTPException(status_code=400, detail="Choose a colour-safe filter")
     try:
         return {"asset": await generate_vision_filter(project_id=body.project_id, asset_id=body.asset_id, source_asset_id=body.source_asset_id, source_object_key=body.source_object_key, source_name=body.source_name, content_type=body.content_type, folder_id=body.folder_id, action=body.action, preset=body.preset, start=body.start, end=body.end)}
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@app.post("/hearing/asl")
+async def create_asl_track(body: AslTrackRequest) -> dict[str, object]:
+    if body.end <= body.start:
+        raise HTTPException(status_code=400, detail="The selected clip range is invalid")
+    try:
+        attached_cues = [cue.model_dump() for cue in body.cues] if body.cues else None
+        return {"cues": await generate_asl_track(body.project_id, body.asset_id, body.start, body.end, body.source, attached_cues, body.source_object_key)}
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@app.post("/hearing/noise-reduce")
+async def create_noise_reduced_asset(body: NoiseReductionRequest) -> dict[str, object]:
+    try:
+        return {"asset": await reduce_background_noise(**body.model_dump())}
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:

@@ -7,7 +7,7 @@ export function ViewerCaptionOverlay({ cues, currentTime, downloadText, kind, la
   const [expanded, setExpanded] = useState(false);
   const active = cues.filter((cue) => cue.start <= currentTime + .18 && cue.end > currentTime + .18);
   const braille = kind === "braille";
-  const title = braille ? "Braille transcript" : "Transcript";
+  const title = braille ? "Braille transcript" : kind === "captions" ? "Captions" : "Transcript";
   function download() {
     const text = braille ? downloadText || cues.map((cue) => `${cue.brfTime || `${clock(cue.start)}-${clock(cue.end)}`}\n${cue.brf || cue.text}`).join("\n\n") : cues.map((cue, index) => `${index + 1}\n${srtTime(cue.start)} --> ${srtTime(cue.end)}\n${cue.text}`).join("\n\n");
     const url = URL.createObjectURL(new Blob([text], { type: braille ? "application/x-brf" : "application/x-subrip;charset=utf-8" }));

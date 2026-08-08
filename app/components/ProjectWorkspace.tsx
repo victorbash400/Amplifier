@@ -9,7 +9,7 @@ import { PreviewPanel } from "./PreviewPanel";
 import { TimelinePanel } from "./TimelinePanel";
 import styles from "./ProjectWorkspace.module.css";
 import type { CreatorAgentId, CreatorAgentRequest } from "./creatorAgentTypes";
-import type { TimelineCaptionTrack } from "./timelineTypes";
+import type { TimelineAslTrack, TimelineCaptionTrack } from "./timelineTypes";
 
 type ProjectWorkspaceProps = {
   project: AmplifierProject;
@@ -28,6 +28,7 @@ export function ProjectWorkspace({ assetsOpen, creatorOpen, project, folders, fi
   const [timelineTime, setTimelineTime] = useState(0);
   const [timelinePlaying, setTimelinePlaying] = useState(false);
   const [captionTrack, setCaptionTrack] = useState<TimelineCaptionTrack>();
+  const [aslTrack, setAslTrack] = useState<TimelineAslTrack>();
   const creatorRef = useRef<CreatorPanelHandle>(null);
   const selectedFile = files.find((file) => file.id === selectedFileId);
   const timeline = useProjectTimeline(project.id, files);
@@ -36,7 +37,9 @@ export function ProjectWorkspace({ assetsOpen, creatorOpen, project, folders, fi
   const activeAudio = timeline.clips.filter((clip) => clip.role === "audio" && timelineTime >= clip.start && timelineTime < clip.start + clip.duration);
   const captionClip = captionTrack && timeline.clips.find((clip) => clip.id === captionTrack.clipId);
   const captions = captionTrack && captionClip ? { large: captionTrack.large, kind: captionTrack.kind, downloadText: captionTrack.downloadText, cues: captionTrack.cues.filter((cue) => cue.end > captionClip.trimStart && cue.start < captionClip.trimStart + captionClip.duration).map((cue) => ({ ...cue, start: captionClip.start + cue.start - captionClip.trimStart, end: captionClip.start + cue.end - captionClip.trimStart })) } : undefined;
-  const timelinePreview = { asset: activeClip?.asset, playing: timelinePlaying, sourceTime: activeClip ? activeClip.trimStart + timelineTime - activeClip.start : 0, timelineTime, timelineDuration: contentDuration, onSeek: setTimelineTime, onTogglePlayback: () => setTimelinePlaying((current) => !current), audio: activeAudio.map((clip) => ({ id: clip.id, asset: clip.asset, sourceTime: clip.trimStart + timelineTime - clip.start, volume: clip.volume ?? 1 })), captions, visionAdjustments: activeClip?.role === "visual" ? activeClip.visionAdjustments : undefined };
+  const aslClip = aslTrack && timeline.clips.find((clip) => clip.id === aslTrack.clipId);
+  const asl = aslTrack && aslClip && activeClip?.id === aslClip.id ? { cues: aslTrack.cues.filter((cue) => cue.end > aslClip.trimStart && cue.start < aslClip.trimStart + aslClip.duration).map((cue) => ({ ...cue, start: aslClip.start + cue.start - aslClip.trimStart, end: aslClip.start + cue.end - aslClip.trimStart })), placement: aslTrack.placement, onPlacementChange: (placement: TimelineAslTrack["placement"]) => setAslTrack((current) => current ? { ...current, placement } : current) } : undefined;
+  const timelinePreview = { asset: activeClip?.asset, playing: timelinePlaying, sourceTime: activeClip ? activeClip.trimStart + timelineTime - activeClip.start : 0, timelineTime, timelineDuration: contentDuration, onSeek: setTimelineTime, onTogglePlayback: () => setTimelinePlaying((current) => !current), audio: activeAudio.map((clip) => ({ id: clip.id, asset: clip.asset, sourceTime: clip.trimStart + timelineTime - clip.start, volume: clip.volume ?? 1 })), captions, asl, visionAdjustments: activeClip?.role === "visual" ? activeClip.visionAdjustments : undefined };
   const layout = assetsOpen ? creatorOpen ? "both" : "assets" : creatorOpen ? "creator" : "none";
   function askAgent(agentId: CreatorAgentId, contextNames: string[]) {
     const request: CreatorAgentRequest = { agentId, contextNames, nonce: crypto.randomUUID() };
@@ -47,5 +50,5 @@ export function ProjectWorkspace({ assetsOpen, creatorOpen, project, folders, fi
     setSelectedFileId(file.id);
     setSelectedFileStart(start);
   }
-  return <section className={styles.workspace} data-panel-layout={layout}>{assetsOpen && <FileSidebar files={files} folders={folders} onFilesChange={onFilesChange} onFoldersChange={onFoldersChange} onOpenFile={openFile} project={project} />}<PreviewPanel selectedFile={selectedFile} selectedFileStart={selectedFileStart} timeline={timelinePreview} /><CreatorPanel hidden={!creatorOpen} projectId={project.id} ref={creatorRef} /><TimelinePanel captionTrack={captionTrack} clips={timeline.clips} error={timeline.error} files={files} onAskAgent={askAgent} onCaptionsChange={setCaptionTrack} onClipsChange={timeline.updateClips} onFilesChange={onFilesChange} onPlayingChange={setTimelinePlaying} onTimeChange={setTimelineTime} onTrackCountsChange={timeline.updateTrackCounts} playing={timelinePlaying} time={timelineTime} trackCounts={timeline.trackCounts} /></section>;
+  return <section className={styles.workspace} data-panel-layout={layout}>{assetsOpen && <FileSidebar files={files} folders={folders} onFilesChange={onFilesChange} onFoldersChange={onFoldersChange} onOpenFile={openFile} project={project} />}<PreviewPanel selectedFile={selectedFile} selectedFileStart={selectedFileStart} timeline={timelinePreview} /><CreatorPanel hidden={!creatorOpen} projectId={project.id} ref={creatorRef} /><TimelinePanel aslTrack={aslTrack} captionTrack={captionTrack} clips={timeline.clips} error={timeline.error} files={files} onAskAgent={askAgent} onAslChange={setAslTrack} onCaptionsChange={setCaptionTrack} onClipsChange={timeline.updateClips} onFilesChange={onFilesChange} onPlayingChange={setTimelinePlaying} onTimeChange={setTimelineTime} onTrackCountsChange={timeline.updateTrackCounts} playing={timelinePlaying} time={timelineTime} trackCounts={timeline.trackCounts} /></section>;
 }

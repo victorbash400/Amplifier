@@ -18,8 +18,11 @@ export type TimelineClip = {
 };
 
 export type CaptionCue = { id: string; start: number; end: number; text: string; brf?: string; brfTime?: string };
-export type CaptionKind = "transcript" | "braille";
+export type CaptionKind = "captions" | "transcript" | "braille";
 export type TimelineCaptionTrack = { clipId: string; cues: CaptionCue[]; large: boolean; kind: CaptionKind; downloadText?: string };
+export type AslCue = { id: string; start: number; end: number; gloss: string; sigml: string };
+export type AslPlacement = { x: number; y: number };
+export type TimelineAslTrack = { clipId: string; cues: AslCue[]; placement: AslPlacement };
 export type TimelineAudioPreview = { id: string; asset: ProjectFile; sourceTime: number; volume: number };
 
 export type TimelinePreviewState = {
@@ -33,4 +36,5 @@ export type TimelinePreviewState = {
   audio: TimelineAudioPreview[];
   visionAdjustments?: TimelineVisionAdjustments;
   captions?: { cues: CaptionCue[]; large: boolean; kind: CaptionKind; downloadText?: string };
+  asl?: { cues: AslCue[]; placement: AslPlacement; onPlacementChange: (placement: AslPlacement) => void };
 };

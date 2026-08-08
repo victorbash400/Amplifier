@@ -25,6 +25,10 @@
 .contrastControl input { min-width: 0; accent-color: #69786d; }
 .contrastControl output { font-size: 7px; font-variant-numeric: tabular-nums; }
 .timeline > header .contrastControl button { width: 20px; height: 20px; }
+.noiseControl { display: grid; width: 160px; height: 38px; flex: 0 0 160px; grid-template-columns: 15px minmax(50px, 1fr) 27px 20px 20px; align-items: center; gap: 3px; color: #727572; }
+.noiseControl input { min-width: 0; accent-color: #69786d; }
+.noiseControl output { font-size: 7px; font-variant-numeric: tabular-nums; text-align: right; }
+.timeline > header .noiseControl button { width: 20px; height: 20px; }
 .timeline > header .accessibilityTools .colorFilter { display: grid; width: 92px; height: 28px; flex: 0 0 92px; padding: 0 7px; grid-template-columns: 14px minmax(0, 1fr) 10px; grid-template-rows: 28px; align-content: normal; align-items: center; gap: 6px; border: 1px solid #e0e2df; border-radius: 7px; background: #fafbfa; color: #666; }
 .timeline > header .accessibilityTools .colorFilter span { min-width: 0; overflow: hidden; font-size: 8px; font-weight: 600; line-height: 1; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .colorFilter > svg { display: block; }

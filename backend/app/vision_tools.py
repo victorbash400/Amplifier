@@ -104,6 +104,7 @@ async def generate_vision_filter(*, project_id: str, asset_id: str, source_asset
             "type": output_type,
             "objectKey": object_key,
             "generation": str(output_blob.generation or ""),
+            "accessibilitySourceId": source_asset_id,
             **({"duration": duration} if duration else {}),
         }
 

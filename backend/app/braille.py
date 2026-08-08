@@ -2,14 +2,14 @@ import asyncio
 import shutil
 import subprocess
 
-from app.media_search import asset_transcript
+from app.transcript_service import transcript_for_asset
 
 
 TRANSLATION_TABLE = "en-ueb-g2.ctb"
 
 
-async def braille_transcript(project_id: str, asset_id: str) -> dict[str, object]:
-    cues = await asset_transcript(project_id, asset_id)
+async def braille_transcript(project_id: str, asset_id: str, object_key: str | None = None) -> dict[str, object]:
+    cues = await transcript_for_asset(project_id, asset_id, object_key)
     if not cues:
         return {"cues": [], "brf": ""}
 

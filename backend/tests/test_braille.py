@@ -29,7 +29,7 @@ class BrailleTranslationTests(unittest.TestCase):
     def test_builds_a_timed_braille_track(self) -> None:
         transcript = [{"id": "cue-1", "start": 2.1, "end": 4.2, "text": "Coffee is ready."}]
 
-        with patch("app.braille.asset_transcript", new=AsyncMock(return_value=transcript)):
+        with patch("app.braille.transcript_for_asset", new=AsyncMock(return_value=transcript)):
             result = asyncio.run(braille_transcript("project", "asset"))
 
         cue = result["cues"][0]

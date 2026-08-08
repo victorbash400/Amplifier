@@ -1,0 +1,6 @@
+.overlay { position: absolute; z-index: 5; width: clamp(112px, 27%, 190px); max-height: 46%; aspect-ratio: 6 / 5; border: 1px solid rgba(255, 255, 255, .65); border-radius: 8px; background: #eef0ec; box-shadow: 0 4px 14px rgba(20, 24, 21, .16); overflow: hidden; cursor: grab; touch-action: none; user-select: none; }
+.overlay:active { cursor: grabbing; }
+.overlay:focus-visible { outline: 2px solid rgba(82, 107, 89, .8); outline-offset: 2px; }
+.overlay :global(.CWASAAvatar) { width: 200% !important; height: 200% !important; transform: scale(.5); transform-origin: top left; }
+.overlay canvas { width: 100% !important; height: 100% !important; object-fit: contain; }
+.loading { position: absolute; inset: 0; display: grid; place-items: center; color: #777; font-size: 8px; }

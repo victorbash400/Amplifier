@@ -1,0 +1,17 @@
+{
+  "description": "Amplifier CWASA signer configuration",
+  "avSettings": [
+    {
+      "width": 768,
+      "height": 640,
+      "avList": "avs",
+      "initAv": "anna",
+      "initCamera": [0, 0.23, 3.24, 5, 18, 30, -1, -1],
+      "initSpeed": 0,
+      "rateSpeed": 5,
+      "allowFrameSteps": false,
+      "initSiGMLURL": "",
+      "allowSiGMLText": true
+    }
+  ]
+}

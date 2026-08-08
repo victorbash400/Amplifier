@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     return proxy(new URL(`${backendUrl.replace(/\/$/, "")}/search/${body.action}`), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ project_id: body.projectId, asset_id: body.assetId }),
+      body: JSON.stringify({ project_id: body.projectId, asset_id: body.assetId, object_key: body.objectKey }),
     });
   }
   const response = await fetch(new URL(`${backendUrl.replace(/\/$/, "")}/search/index`), {
