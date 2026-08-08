@@ -29,6 +29,7 @@ export type ProjectFile = {
   width?: number;
   height?: number;
   hasAudio?: boolean;
+  audioProbe?: "ffprobe";
 };
 
 export type WorkspaceData = {

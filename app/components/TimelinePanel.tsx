@@ -150,7 +150,7 @@ export function TimelinePanel({ clips, error, files, onAskAgent, onClipsChange, 
     const visualLane = laneAt(event.clientY, "visual");
     keepTrack("visual", visualLane);
     if (asset.type.startsWith("video/")) {
-      if (asset.hasAudio === false) {
+      if (asset.hasAudio === false && asset.audioProbe === "ffprobe") {
         const collisionStart = collisionFreeStart(clips, start, [{ lane: visualLane, role: "visual", offset: 0, duration }]);
         commit([...clips, { id: crypto.randomUUID(), asset, start: collisionStart, duration, lane: visualLane, sourceDuration: duration, trimStart: 0, role: "visual" }]);
         return;

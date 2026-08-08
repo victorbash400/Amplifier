@@ -100,7 +100,7 @@ async def begin_asset_upload(body: AssetUploadRequest) -> dict[str, str]:
 
 
 @app.post("/assets/uploads/complete")
-async def complete_asset_upload(body: AssetUploadCompleteRequest) -> dict[str, str | int]:
+async def complete_asset_upload(body: AssetUploadCompleteRequest) -> dict[str, str | int | bool | None]:
     try:
         asset = await asyncio.to_thread(
             verify_uploaded_asset,
@@ -116,6 +116,7 @@ async def complete_asset_upload(body: AssetUploadCompleteRequest) -> dict[str, s
         "generation": asset.generation,
         "size": asset.size,
         "content_type": asset.content_type,
+        "has_audio": asset.has_audio,
     }
 
 

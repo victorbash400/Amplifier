@@ -4,14 +4,14 @@ const chunkSize = 8 * 1024 * 1024;
 const maxAttempts = 3;
 
 type UploadSession = { upload_url: string; object_key: string };
-type CompletedUpload = { object_key: string; generation: string; size: number; content_type: string };
+type CompletedUpload = { object_key: string; generation: string; size: number; content_type: string; has_audio: boolean | null };
 
 export async function uploadProjectAsset({ assetId, file, folderId, localUrl, onProgress, projectId }: { assetId: string; file: File; folderId: string; localUrl: string; onProgress: (progress: number) => void; projectId: string }): Promise<ProjectFile> {
   const metadata = await readAssetMetadata(localUrl, file);
   const session = await request<UploadSession>("POST", { projectId, assetId, fileName: file.name, contentType: file.type || "application/octet-stream", size: file.size });
   await uploadChunks(session.upload_url, file, onProgress);
   const completed = await request<CompletedUpload>("PATCH", { projectId, assetId, fileName: file.name, size: file.size });
-  return { id: assetId, projectId, folderId, name: file.name, size: completed.size, type: completed.content_type, objectKey: completed.object_key, generation: completed.generation, localUrl, ...metadata };
+  return { id: assetId, projectId, folderId, name: file.name, size: completed.size, type: completed.content_type, objectKey: completed.object_key, generation: completed.generation, localUrl, ...metadata, ...(completed.has_audio === null ? {} : { hasAudio: completed.has_audio, audioProbe: "ffprobe" as const }) };
 }
 
 export function assetUrl(file: ProjectFile) {
@@ -85,36 +85,15 @@ function readAssetMetadata(url: string, file: File) {
     image.onerror = () => reject(new Error("Could not read image metadata"));
     image.src = url;
   });
-  if (contentType.startsWith("video/") || contentType.startsWith("audio/")) return new Promise<{ duration: number; width?: number; height?: number; hasAudio?: boolean }>((resolve, reject) => {
+  if (contentType.startsWith("video/") || contentType.startsWith("audio/")) return new Promise<{ duration: number; width?: number; height?: number }>((resolve, reject) => {
     const media = document.createElement(contentType.startsWith("video/") ? "video" : "audio");
     media.preload = "metadata";
     media.onloadedmetadata = async () => {
       if (!Number.isFinite(media.duration)) return reject(new Error("Media duration is invalid"));
-      resolve({ duration: media.duration, ...(media instanceof HTMLVideoElement ? { width: media.videoWidth, height: media.videoHeight, hasAudio: await videoHasAudio(media, file) } : {}) });
+      resolve({ duration: media.duration, ...(media instanceof HTMLVideoElement ? { width: media.videoWidth, height: media.videoHeight } : {}) });
     };
     media.onerror = () => reject(new Error("Could not read media metadata"));
     media.src = url;
   });
   return Promise.resolve({});
-}
-
-async function videoHasAudio(video: HTMLVideoElement, file: File) {
-  const aware = video as HTMLVideoElement & { audioTracks?: { length: number }; mozHasAudio?: boolean; webkitAudioDecodedByteCount?: number; captureStream?: () => MediaStream };
-  if (aware.audioTracks) return aware.audioTracks.length > 0;
-  if (typeof aware.mozHasAudio === "boolean") return aware.mozHasAudio;
-  const captured = aware.captureStream?.().getAudioTracks();
-  if (captured?.length) return true;
-  if (typeof aware.webkitAudioDecodedByteCount === "number" && aware.webkitAudioDecodedByteCount > 0) return true;
-  return fileContainsAudioTrack(file);
-}
-
-async function fileContainsAudioTrack(file: File) {
-  const sampleSize = 16 * 1024 * 1024;
-  const samples = [file.slice(0, Math.min(sampleSize, file.size))];
-  if (file.size > sampleSize) samples.push(file.slice(Math.max(0, file.size - sampleSize)));
-  for (const sample of samples) {
-    const text = new TextDecoder("latin1").decode(await sample.arrayBuffer());
-    if (text.includes("soun") || text.includes("A_OPUS") || text.includes("A_VORBIS") || text.includes("A_AAC")) return true;
-  }
-  return false;
 }

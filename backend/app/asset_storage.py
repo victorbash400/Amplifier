@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import re
+import subprocess
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterator
 
 from google.cloud import storage
@@ -15,6 +18,7 @@ class StoredAsset:
     generation: str
     size: int
     content_type: str
+    has_audio: bool | None
 
 
 @dataclass(frozen=True)
@@ -54,12 +58,33 @@ def verify_uploaded_asset(*, project_id: str, asset_id: str, file_name: str, exp
     blob.reload()
     if blob.size != expected_size:
         raise ValueError(f"Uploaded object size is {blob.size}; expected {expected_size}")
+    content_type = blob.content_type or "application/octet-stream"
     return StoredAsset(
         object_key=object_key,
         generation=str(blob.generation or ""),
         size=int(blob.size or 0),
-        content_type=blob.content_type or "application/octet-stream",
+        content_type=content_type,
+        has_audio=_probe_audio_stream(blob) if content_type.startswith("video/") else None,
     )
+
+
+def _probe_audio_stream(blob: storage.Blob) -> bool:
+    with tempfile.NamedTemporaryFile(prefix="amplifier-upload-probe-", suffix=Path(blob.name).suffix, delete=False) as temporary:
+        source = Path(temporary.name)
+    try:
+        blob.download_to_filename(source)
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=index", "-of", "csv=p=0", str(source)],
+            capture_output=True,
+            text=True,
+            timeout=90,
+            check=False,
+        )
+        if result.returncode:
+            raise RuntimeError((result.stderr or "FFprobe could not inspect uploaded video").strip()[-400:])
+        return bool(result.stdout.strip())
+    finally:
+        source.unlink(missing_ok=True)
 
 
 def asset_object_key(project_id: str, asset_id: str, file_name: str) -> str:
