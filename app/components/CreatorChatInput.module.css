@@ -66,6 +66,7 @@
   gap: 5px;
   justify-content: space-between;
 }
+.attachments { display: flex; align-items: center; gap: 3px; }
 
 .toolbar button {
   display: grid;
@@ -80,12 +81,19 @@
   cursor: pointer;
 }
 
-.toolbar button:last-child {
+.toolbar > button:last-child {
   width: 34px;
   height: 34px;
   background: #222;
   color: #fff;
 }
+
+.attachments button:last-child {
+  background: #f1f1ef;
+  color: #5d5d59;
+}
+
+.attachments button:last-child:hover { background: #e8e8e5; }
 
 .toolbar button:disabled {
   opacity: 0.25;

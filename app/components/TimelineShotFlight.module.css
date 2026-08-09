@@ -1,0 +1,3 @@
+.wash { position: fixed; z-index: 98; inset: 0; pointer-events: none; background: rgb(255 255 255 / 10%); animation: wash 360ms ease-out both; }
+.flight { position: fixed; z-index: 99; pointer-events: none; object-fit: cover; box-shadow: 0 16px 40px rgb(0 0 0 / 18%); }
+@keyframes wash { 0% { opacity: 0; } 25% { opacity: 1; } 100% { opacity: 0; } }

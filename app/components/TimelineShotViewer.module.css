@@ -1,0 +1,22 @@
+.backdrop { position: fixed; z-index: 90; inset: 0; display: grid; padding: 32px; place-items: center; background: rgb(20 20 19 / 28%); backdrop-filter: blur(8px); }
+.viewer { width: min(760px, calc(100vw - 32px)); max-height: min(680px, calc(100vh - 32px)); overflow-x: hidden; overflow-y: auto; border: 1px solid #d8d8d5; border-radius: 20px; background: #fcfcfc; box-shadow: 0 24px 80px rgb(0 0 0 / 18%); }
+.viewer > header { position: sticky; top: 0; z-index: 1; display: grid; grid-template-columns: minmax(0, 1fr) auto 28px; align-items: center; gap: 12px; padding: 12px 14px; border-bottom: 1px solid #e2e2df; background: rgb(252 252 252 / 96%); }
+.viewer > header > strong { overflow: hidden; font-size: 14px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.viewer > header nav { display: flex; gap: 3px; padding: 3px; border-radius: 9px; background: #ededeb; }
+.viewer button { padding: 6px 9px; border: 0; border-radius: 7px; background: transparent; color: #555550; cursor: pointer; font-size: 12px; line-height: 1; white-space: nowrap; }
+.viewer button[aria-pressed="true"] { background: #fff; color: #222; box-shadow: 0 1px 3px rgb(0 0 0 / 9%); }
+.viewer > header > button { display: grid; width: 28px; height: 28px; padding: 0; place-items: center; justify-self: end; }
+.viewer > img { display: block; width: 100%; max-width: 100%; height: auto; }
+.structure { display: grid; gap: 0; padding: 18px; }
+.structure h3 { margin: 18px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #777; }
+.structure p { display: grid; grid-template-columns: minmax(110px, .5fr) 1fr; gap: 12px; margin: 0; padding: 9px 0; border-bottom: 1px solid #ececea; font-size: 12px; }
+.structure span { color: #6d6d68; }
+
+@media (max-width: 520px) {
+  .backdrop { padding: 12px; }
+  .viewer { width: calc(100vw - 24px); max-height: calc(100vh - 24px); border-radius: 16px; }
+  .viewer > header { grid-template-columns: 1fr 28px; }
+  .viewer > header nav { grid-column: 1 / -1; grid-row: 2; justify-self: stretch; }
+  .viewer > header nav button { flex: 1; }
+  .viewer > header > button { grid-column: 2; grid-row: 1; }
+}

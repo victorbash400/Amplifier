@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import base64
+import re
 from copy import deepcopy
 from typing import AsyncIterator
 from uuid import uuid4
@@ -10,7 +12,6 @@ from google.adk.agents import RunConfig
 from google.adk.agents.run_config import StreamingMode
 from google.adk.runners import Runner
 from google.adk.sessions import DatabaseSessionService
-from google import genai
 from google.genai import types
 
 from app.agents import agent_apps
@@ -38,6 +39,17 @@ async def ensure_session(user_id: str, session_id: str, agent_id: str = "general
     )
 
 
+async def update_session_context(*, user_id: str, session_id: str, agent_id: str, state: dict[str, object]) -> None:
+    runner = runner_for(agent_id)
+    session = await sessions.get_session(app_name=runner.app_name, user_id=user_id, session_id=session_id)
+    if not session:
+        raise ValueError("The agent session does not exist")
+    await sessions.append_event(
+        session,
+        Event(author="system", actions=EventActions(state_delta={"active_agent_id": agent_id, **state})),
+    )
+
+
 async def branch_session(*, user_id: str, source_session_id: str, target_session_id: str, agent_id: str) -> None:
     runner = runner_for(agent_id)
     source = await sessions.get_session(
@@ -61,7 +73,7 @@ async def branch_session(*, user_id: str, source_session_id: str, target_session
         await sessions.append_event(target, event)
 
 
-async def stream_agent_events(*, user_id: str, session_id: str, message: str, agent_id: str = "general") -> AsyncIterator[str]:
+async def stream_agent_events(*, user_id: str, session_id: str, message: str, agent_id: str = "general", timeline_shot: dict[str, object] | None = None) -> AsyncIterator[str]:
     try:
         runner = runner_for(agent_id)
         session = await sessions.get_session(
@@ -71,10 +83,12 @@ async def stream_agent_events(*, user_id: str, session_id: str, message: str, ag
         )
         needs_title = not session or not session.state.get("chat_title")
         assistant_text = ""
-        content = types.Content(
-            role="user",
-            parts=[types.Part.from_text(text=message)],
-        )
+        parts = [types.Part.from_text(text=message)]
+        if timeline_shot:
+            structured = {key: value for key, value in timeline_shot.items() if key != "image"}
+            parts.append(types.Part.from_text(text=f"Verified Timeline Shot attachment:\n{json.dumps(structured, separators=(',', ':'))}"))
+            parts.append(types.Part.from_bytes(data=base64.b64decode(str(timeline_shot["image"]).split(",", 1)[1]), mime_type="image/png"))
+        content = types.Content(role="user", parts=parts)
         seen_tool_calls: set[str] = set()
         config = RunConfig(streaming_mode=StreamingMode.SSE)
         async for event in runner.run_async(
@@ -150,21 +164,6 @@ def runner_for(agent_id: str) -> Runner:
 
 
 async def chat_title(user_message: str, assistant_message: str) -> str:
-    prompt = f"Name this chat in 2 to 5 words. Return only the title, without quotes or punctuation.\n\nUser: {user_message}\nAssistant: {assistant_message[:1200]}"
-    response = await genai.Client(
-        vertexai=True,
-        project=settings.google_cloud_project,
-        location=settings.google_cloud_location,
-    ).aio.models.generate_content(
-        model="gemini-3-flash-preview",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            max_output_tokens=24,
-            temperature=0.2,
-            thinking_config=types.ThinkingConfig(
-                thinking_level=types.ThinkingLevel.MINIMAL,
-            ),
-        ),
-    )
-    title = " ".join((response.text or "").strip().strip('"').split())
-    return title[:60] or "New chat"
+    del assistant_message
+    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9'-]*", user_message)
+    return " ".join(words[:5])[:60] or "New chat"

@@ -1,0 +1,32 @@
+.scan {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  background: rgba(205, 206, 202, .045);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.scan::after {
+  position: absolute;
+  inset: -6px auto -6px -24%;
+  width: 24%;
+  background: linear-gradient(90deg, transparent, rgba(185, 186, 182, .2), rgba(242, 242, 239, .62), transparent);
+  content: "";
+  filter: blur(6px);
+  animation: timeline-agent-scan 2.35s cubic-bezier(.4, 0, .2, 1) infinite;
+}
+
+@keyframes timeline-agent-scan {
+  0% { opacity: 0; transform: translateX(0); }
+  12% { opacity: 1; }
+  82% { opacity: 1; }
+  100% { opacity: 0; transform: translateX(520%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scan::after {
+    left: 33%;
+    animation: none;
+  }
+}

@@ -7,11 +7,11 @@ export type CreatorStreamEvent =
   | { type: "error"; error: string }
   | { type: "done" };
 
-export async function streamCreatorMessage({ agentId, message, onEvent, projectId, sessionId, signal }: { agentId: string; message: string; onEvent: (event: CreatorStreamEvent) => void | Promise<void>; projectId: string; sessionId: string; signal?: AbortSignal }) {
+export async function streamCreatorMessage({ agentId, message, onEvent, playhead, projectId, selectedClipIds, sessionId, signal, timeline, timelineRevision, timelineShot }: { agentId: string; message: string; onEvent: (event: CreatorStreamEvent) => void | Promise<void>; playhead: number; projectId: string; selectedClipIds: string[]; sessionId: string; signal?: AbortSignal; timeline: Record<string, unknown>; timelineRevision: number; timelineShot?: import("./timelineShot").TimelineShot }) {
   const response = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-    body: JSON.stringify({ agentId, message, projectId, sessionId }),
+    body: JSON.stringify({ agentId, message, playhead, projectId, selectedClipIds, sessionId, timeline, timelineRevision, timelineShot }),
     signal,
   });
   if (!response.ok || !response.body) {

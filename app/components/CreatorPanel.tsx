@@ -1,7 +1,7 @@
 "use client";
 
 import { PanelLeft } from "lucide-react";
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { createCreatorChat, loadCreatorChats, saveCreatorChats } from "../lib/creatorChatStorage";
 import { applyCreatorEvent, finishReasoning } from "../lib/creatorMessages";
 import { streamCreatorMessage } from "../lib/creatorStream";
@@ -12,13 +12,28 @@ import { CreatorChatInput } from "./CreatorChatInput";
 import { CreatorMessageList } from "./CreatorMessageList";
 import type { CreatorChat, CreatorMessage } from "./creatorChatTypes";
 import { creatorAgentName, type CreatorAgentId, type CreatorAgentRequest } from "./creatorAgentTypes";
+import type { TimelineDocument } from "../lib/timelineDocument";
+import { captureTimelineShot, type TimelineShot } from "../lib/timelineShot";
+import type { ProjectFile } from "../types/workspace";
+import { TimelineShotFlight, type ShotRect } from "./TimelineShotFlight";
 import styles from "./CreatorPanel.module.css";
 
 export type CreatorPanelHandle = {
   requestAgent: (request: CreatorAgentRequest) => void;
 };
 
-export const CreatorPanel = forwardRef<CreatorPanelHandle, { hidden: boolean; projectId: string }>(function CreatorPanel({ hidden, projectId }, ref) {
+type CreatorPanelProps = {
+  hidden: boolean;
+  files: ProjectFile[];
+  onActivityChange: (active: boolean) => void;
+  onToolResponse: (result: Record<string, unknown>) => void;
+  playhead: number;
+  projectId: string;
+  selectedClipIds: string[];
+  timeline: TimelineDocument;
+};
+
+export const CreatorPanel = forwardRef<CreatorPanelHandle, CreatorPanelProps>(function CreatorPanel({ files, hidden, onActivityChange, onToolResponse, playhead, projectId, selectedClipIds, timeline }, ref) {
   const [chats, setChats] = useState<CreatorChat[]>([]);
   const [activeChatId, setActiveChatId] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -28,8 +43,11 @@ export const CreatorPanel = forwardRef<CreatorPanelHandle, { hidden: boolean; pr
   const [error, setError] = useState<string>();
   const [pendingAgentRequest, setPendingAgentRequest] = useState<CreatorAgentRequest>();
   const [changingChat, setChangingChat] = useState(false);
+  const [timelineShot, setTimelineShot] = useState<TimelineShot>();
+  const [shotFlight, setShotFlight] = useState<{ destination: ShotRect; image: string; source: ShotRect }>();
   const controllerRef = useRef<AbortController | undefined>(undefined);
   const activeChat = chats.find((chat) => chat.id === activeChatId);
+  const finishShotFlight = useCallback(() => setShotFlight(undefined), []);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -80,6 +98,7 @@ export const CreatorPanel = forwardRef<CreatorPanelHandle, { hidden: boolean; pr
     setError(undefined);
     setDrawerOpen(false);
     setPendingAgentRequest(undefined);
+    setTimelineShot(undefined);
   }
 
   useImperativeHandle(ref, () => ({
@@ -148,24 +167,29 @@ export const CreatorPanel = forwardRef<CreatorPanelHandle, { hidden: boolean; pr
     setStreaming(false);
     setError(undefined);
     setDrawerOpen(false);
+    setTimelineShot(undefined);
   }
 
   async function send() {
     const content = input.trim();
     const chatId = activeChat?.id;
     if (!content || streaming || !chatId) return;
-    updateMessages(chatId, (messages) => [...finishReasoning(messages), { id: crypto.randomUUID(), role: "user", blocks: [{ id: crypto.randomUUID(), kind: "text", content }] }]);
+    const submittedShot = timelineShot;
+    updateMessages(chatId, (messages) => [...finishReasoning(messages), { id: crypto.randomUUID(), role: "user", blocks: [...(submittedShot ? [{ id: crypto.randomUUID(), kind: "timeline-shot" as const, shot: submittedShot }] : []), { id: crypto.randomUUID(), kind: "text" as const, content }] }]);
     setInput("");
+    setTimelineShot(undefined);
     setError(undefined);
     setStreaming(true);
+    onActivityChange(true);
     const controller = new AbortController();
     controllerRef.current = controller;
     try {
-      await streamCreatorMessage({ agentId: activeChat.agentId || "general", message: content, projectId, sessionId: chatId, signal: controller.signal, onEvent: (event) => {
+      await streamCreatorMessage({ agentId: activeChat.agentId || "general", message: content, playhead, projectId, selectedClipIds, sessionId: chatId, signal: controller.signal, timeline, timelineRevision: timeline.revision, timelineShot: submittedShot, onEvent: (event) => {
         if (event.type === "title") {
           setChats((current) => current.map((chat) => chat.id === chatId ? { ...chat, title: event.title, updatedAt: Date.now() } : chat));
           return;
         }
+        if (event.type === "tool_response") onToolResponse(event.result);
         updateMessages(chatId, (messages) => applyCreatorEvent(messages, event));
       } });
     } catch (reason) {
@@ -173,11 +197,45 @@ export const CreatorPanel = forwardRef<CreatorPanelHandle, { hidden: boolean; pr
     } finally {
       updateMessages(chatId, (messages) => finishReasoning(messages));
       setStreaming(false);
+      onActivityChange(false);
       controllerRef.current = undefined;
+    }
+  }
+
+  async function captureShot() {
+    try {
+      const sourceElement = document.querySelector<HTMLElement>('[aria-label="Editable timeline"]');
+      if (!sourceElement) throw new Error("The timeline is not visible");
+      const source = rect(sourceElement.getBoundingClientRect());
+      const shot = await captureTimelineShot(projectId, timeline, files, playhead, selectedClipIds);
+      setTimelineShot(shot);
+      requestAnimationFrame(() => {
+        const destinationElement = document.querySelector<HTMLElement>("[data-timeline-shot-card]");
+        if (destinationElement) setShotFlight({ destination: rect(destinationElement.getBoundingClientRect()), image: shot.image, source });
+      });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not capture the timeline");
     }
   }
 
   if (!loaded) return <aside className={styles.panel} aria-label="Creator" hidden={hidden} />;
 
-  return <aside className={styles.panel} aria-label="Creator" hidden={hidden}><header className={styles.chatHeader}><button aria-label="Open chat drawer" onClick={() => setDrawerOpen(true)} type="button"><PanelLeft size={16} /></button><strong>{creatorAgentName(activeChat?.agentId || "general")}</strong></header><CreatorMessageList messages={activeChat?.messages ?? []} waiting={streaming && activeChat?.messages.at(-1)?.role === "user"} />{error && <p className={styles.error} role="alert">{error}</p>}{pendingAgentRequest && <CreatorAgentChoice agentId={pendingAgentRequest.agentId} disabled={changingChat || streaming} onBranch={() => void branchWithAgent()} onCancel={() => setPendingAgentRequest(undefined)} onContinue={continueWithAgent} onNewChat={() => startNewChat(pendingAgentRequest.agentId, pendingAgentRequest.contextNames)} />}<CreatorChatInput agentName={creatorAgentName(activeChat?.agentId || "general")} contextNames={activeChat?.contextNames || []} disabled={streaming || changingChat || !activeChat} input={input} onConnect={() => setError("Project asset connections are not configured yet")} onInputChange={setInput} onSend={send} />{drawerOpen && <CreatorDrawer activeChatId={activeChatId} chats={chats} onClose={() => setDrawerOpen(false)} onNewChat={() => startNewChat()} onSelect={openChat} />}</aside>;
+  return (
+      <aside className={styles.panel} aria-label="Creator" hidden={hidden}>
+        <header className={styles.chatHeader}>
+          <button aria-label="Open chat drawer" onClick={() => setDrawerOpen(true)} type="button"><PanelLeft size={16} /></button>
+          <strong>{creatorAgentName(activeChat?.agentId || "general")}</strong>
+        </header>
+        <CreatorMessageList messages={activeChat?.messages ?? []} waiting={streaming && activeChat?.messages.at(-1)?.role === "user"} />
+        {error && <p className={styles.error} role="alert">{error}</p>}
+        {pendingAgentRequest && <CreatorAgentChoice agentId={pendingAgentRequest.agentId} disabled={changingChat || streaming} onBranch={() => void branchWithAgent()} onCancel={() => setPendingAgentRequest(undefined)} onContinue={continueWithAgent} onNewChat={() => startNewChat(pendingAgentRequest.agentId, pendingAgentRequest.contextNames)} />}
+        <CreatorChatInput agentName={creatorAgentName(activeChat?.agentId || "general")} contextNames={activeChat?.contextNames || []} disabled={streaming || changingChat || !activeChat} input={input} onCaptureTimeline={() => void captureShot()} onConnect={() => setError("Project asset connections are not configured yet")} onInputChange={setInput} onRemoveTimelineShot={() => setTimelineShot(undefined)} onSend={send} timelineShot={timelineShot} />
+        <CreatorDrawer activeChatId={activeChatId} chats={chats} onClose={() => setDrawerOpen(false)} onNewChat={() => startNewChat()} onSelect={openChat} open={drawerOpen} />
+        {shotFlight && <TimelineShotFlight destination={shotFlight.destination} image={shotFlight.image} onFinish={finishShotFlight} source={shotFlight.source} />}
+      </aside>
+  );
 });
+
+function rect(value: DOMRect): ShotRect {
+  return { left: value.left, top: value.top, width: value.width, height: value.height };
+}

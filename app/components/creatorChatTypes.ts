@@ -9,6 +9,7 @@ export type CreatorToolCall = {
 export type CreatorBlock =
   | { id: string; kind: "text"; content: string }
   | { id: string; kind: "reasoning"; content: string; startedAt?: number; finishedAt?: number }
+  | { id: string; kind: "timeline-shot"; shot: import("../lib/timelineShot").TimelineShot }
   | { id: string; kind: "tool"; tool: CreatorToolCall };
 
 export type CreatorMessage = {

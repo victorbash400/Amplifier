@@ -2,20 +2,22 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, DragEvent, PointerEvent } from "react";
-import { ChevronsLeft, Magnet, Maximize2, MousePointer2, Pause, Play, Redo2, Scissors, SquarePen, Trash2, Undo2, ZoomIn, ZoomOut } from "lucide-react";
-import type { ProjectFile } from "../types/workspace";
+import { ChevronsLeft, Download, Magnet, Maximize2, MousePointer2, Pause, Play, Redo2, Scissors, SquarePen, Trash2, Undo2, ZoomIn, ZoomOut } from "lucide-react";
+import type { ProjectFile, ProjectFolder } from "../types/workspace";
 import { useTimelineShortcuts } from "../hooks/useTimelineShortcuts";
 import { collisionFreeStart } from "../lib/timelineLayout";
 import { assetUrl, readMediaDuration } from "../lib/assetUploads";
 import { deleteTimelineClip, moveTimelineClip, snapTimelineTime, splitTimelineClip, trimTimelineClip } from "../lib/timelineOperations";
 import { TimelineClipItem, type TimelineClipHandlers } from "./TimelineClipItem";
+import { TimelineAgentScan } from "./TimelineAgentScan";
 import { TimelineModeSwitcher, type TimelineMode } from "./TimelineModeSwitcher";
 import { TimelineAccessibilityTools, type HearingToolAction, type VisionColorPreset, type VisionToolAction } from "./TimelineAccessibilityTools";
 import type { SensoryToolAction } from "./TimelineAccessibilityTools";
 import type { AslSource } from "./TimelineAslSourcePicker";
 import { TimelineClipVolumeControl } from "./TimelineClipVolumeControl";
 import { TimelineHorizontalScrollbar } from "./TimelineHorizontalScrollbar";
-import { TimelineLanguageTools } from "./TimelineLanguageTools";
+import { TimelineExportModal } from "./TimelineExportModal";
+import { TimelineLanguageTools, type LanguageAction } from "./TimelineLanguageTools";
 import { TimelineRuler, formatTimecode } from "./TimelineRuler";
 import { TimelineTrackHeaders } from "./TimelineTrackHeaders";
 import { buildTimelineTracks, firstEmptyTrackLane, type TimelineTrack, type TimelineTrackCounts } from "./timelineTracks";
@@ -27,17 +29,21 @@ const baseDuration = 20;
 const trailingRoom = 8;
 
 type TimelinePanelProps = {
+  agentActive?: boolean;
+  agentCommitToken?: number;
   aslTrack?: TimelineAslTrack;
   captionTrack?: TimelineCaptionTrack;
   clips: TimelineClip[];
   error?: string;
   files: ProjectFile[];
+  folders: ProjectFolder[];
   onClipsChange: (clips: TimelineClip[]) => void;
   onAskAgent: (agentId: CreatorAgentId, contextNames: string[]) => void;
   onAslChange: (track?: TimelineAslTrack) => void;
   onCaptionsChange: (captions?: TimelineCaptionTrack) => void;
   onFilesChange: (files: ProjectFile[]) => void;
   onPlayingChange: (playing: boolean) => void;
+  onSelectionChange?: (clipIds: string[], playhead: number) => void;
   onTimeChange: (time: number) => void;
   onTrackCountsChange: (counts: TimelineTrackCounts) => void;
   playing: boolean;
@@ -45,7 +51,7 @@ type TimelinePanelProps = {
   trackCounts: TimelineTrackCounts;
 };
 
-export function TimelinePanel({ aslTrack, captionTrack, clips, error, files, onAskAgent, onAslChange, onCaptionsChange, onClipsChange, onFilesChange, onPlayingChange, onTimeChange, onTrackCountsChange, playing, time, trackCounts }: TimelinePanelProps) {
+export function TimelinePanel({ agentActive = false, agentCommitToken = 0, aslTrack, captionTrack, clips, error, files, folders, onAskAgent, onAslChange, onCaptionsChange, onClipsChange, onFilesChange, onPlayingChange, onSelectionChange, onTimeChange, onTrackCountsChange, playing, time, trackCounts }: TimelinePanelProps) {
   const canvasRef = useRef<HTMLElement>(null);
   const viewportRef = useRef<HTMLElement>(null);
   const dragOffset = useRef(0);
@@ -53,12 +59,17 @@ export function TimelinePanel({ aslTrack, captionTrack, clips, error, files, onA
   const editChanged = useRef(false);
   const undoStack = useRef<TimelineClip[][]>([]);
   const redoStack = useRef<TimelineClip[][]>([]);
+  const previousClips = useRef(clips);
+  const previousAgentCommitToken = useRef(agentCommitToken);
   const metadataRequests = useRef(new Set<string>());
   const playbackTime = useRef(time);
   const [selectedId, setSelectedId] = useState<string>();
   const [scale, setScale] = useState(1);
   const [snapping, setSnapping] = useState(true);
   const [dropError, setDropError] = useState<string>();
+  const [exportError, setExportError] = useState<string>();
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [undoCount, setUndoCount] = useState(0);
   const [redoCount, setRedoCount] = useState(0);
   const [dropActive, setDropActive] = useState(false);
@@ -68,6 +79,7 @@ export function TimelinePanel({ aslTrack, captionTrack, clips, error, files, onA
   const [visionWorking, setVisionWorking] = useState<VisionToolAction>();
   const [hearingWorking, setHearingWorking] = useState<HearingToolAction>();
   const [sensoryWorking, setSensoryWorking] = useState<SensoryToolAction>();
+  const [languageWorking, setLanguageWorking] = useState<LanguageAction>();
   const [visionClipId, setVisionClipId] = useState<string>();
   const [visionError, setVisionError] = useState<string>();
   const timelineDuration = Math.max(baseDuration, ...clips.map((clip) => clip.start + clip.duration + trailingRoom));
@@ -82,6 +94,18 @@ export function TimelinePanel({ aslTrack, captionTrack, clips, error, files, onA
   const modeLabel = `${mode.charAt(0).toUpperCase()}${mode.slice(1)}`;
 
   useEffect(() => { playbackTime.current = time; }, [time]);
+  useEffect(() => { onSelectionChange?.(selectedId ? [selectedId] : [], time); }, [onSelectionChange, selectedId, time]);
+  useEffect(() => {
+    let frame = 0;
+    if (agentCommitToken !== previousAgentCommitToken.current) {
+      undoStack.current.push(previousClips.current);
+      redoStack.current = [];
+      previousAgentCommitToken.current = agentCommitToken;
+      frame = requestAnimationFrame(() => { setUndoCount(undoStack.current.length); setRedoCount(0); });
+    }
+    previousClips.current = clips;
+    return () => cancelAnimationFrame(frame);
+  }, [agentCommitToken, clips]);
 
   useEffect(() => {
     const missing = files.filter((file) => !file.pending && (file.type.startsWith("video/") || file.type.startsWith("audio/")) && !(file.duration && file.duration > 0) && !metadataRequests.current.has(file.id));
@@ -117,6 +141,30 @@ export function TimelinePanel({ aslTrack, captionTrack, clips, error, files, onA
     setUndoCount(undoStack.current.length);
     setRedoCount(0);
     onClipsChange(next);
+  }
+
+  function commitDroppedClips(next: TimelineClip[], selectedId: string, start: number) {
+    commit(next);
+    setSelectedId(selectedId);
+    onPlayingChange(false);
+    onTimeChange(start);
+  }
+
+  async function exportTimeline(name: string, folderId: string) {
+    setExporting(true);
+    setExportError(undefined);
+    try {
+      if (clips.some((clip) => !clip.asset.objectKey)) throw new Error("Every timeline clip must be uploaded before export");
+      const response = await fetch("/api/timelines/export", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: clips[0].asset.projectId, folderId, name, clips: clips.map((clip) => ({ assetId: clip.asset.id, objectKey: clip.asset.objectKey, name: clip.asset.name, contentType: clip.asset.type, start: clip.start, duration: clip.duration, sourceDuration: clip.sourceDuration, trimStart: clip.trimStart, lane: clip.lane, role: clip.role, volume: clip.volume ?? 1, contrast: clip.visionAdjustments?.contrast ?? 1, colorPreset: clip.visionAdjustments?.colorPreset })) }) });
+      const body = await response.json() as { asset?: ProjectFile; error?: string };
+      if (!response.ok || !body.asset) throw new Error(body.error || "Timeline export failed");
+      onFilesChange([...files, body.asset]);
+      setExportOpen(false);
+    } catch (reason) {
+      setExportError(reason instanceof Error ? reason.message : "Timeline export failed");
+    } finally {
+      setExporting(false);
+    }
   }
 
   function timeAt(clientX: number) {
@@ -166,21 +214,24 @@ export function TimelinePanel({ aslTrack, captionTrack, clips, error, files, onA
     if (asset.type.startsWith("video/")) {
       if (asset.hasAudio === false && asset.audioProbe === "ffprobe") {
         const collisionStart = collisionFreeStart(clips, start, [{ lane: visualLane, role: "visual", offset: 0, duration }]);
-        commit([...clips, { id: crypto.randomUUID(), asset, start: collisionStart, duration, lane: visualLane, sourceDuration: duration, trimStart: 0, role: "visual" }]);
+        const clipId = crypto.randomUUID();
+        commitDroppedClips([...clips, { id: clipId, asset, start: collisionStart, duration, lane: visualLane, sourceDuration: duration, trimStart: 0, role: "visual" }], clipId, collisionStart);
         return;
       }
       const linkId = crypto.randomUUID();
+      const visualId = crypto.randomUUID();
       const audioLane = tracks.some((track) => track.role === "audio" && track.lane === visualLane) ? visualLane : firstEmptyTrackLane(clips, "audio");
       keepTrack("audio", audioLane);
       const collisionStart = collisionFreeStart(clips, start, [{ lane: visualLane, role: "visual", offset: 0, duration }, { lane: audioLane, role: "audio", offset: 0, duration }]);
-      commit([...clips, { id: crypto.randomUUID(), asset, start: collisionStart, duration, lane: visualLane, sourceDuration: duration, trimStart: 0, role: "visual", linkId }, { id: crypto.randomUUID(), asset, start: collisionStart, duration, lane: audioLane, sourceDuration: duration, trimStart: 0, role: "audio", linkId }]);
+      commitDroppedClips([...clips, { id: visualId, asset, start: collisionStart, duration, lane: visualLane, sourceDuration: duration, trimStart: 0, role: "visual", linkId }, { id: crypto.randomUUID(), asset, start: collisionStart, duration, lane: audioLane, sourceDuration: duration, trimStart: 0, role: "audio", linkId }], visualId, collisionStart);
       return;
     }
     const role = asset.type.startsWith("audio/") ? "audio" : "visual";
     const targetLane = laneAt(event.clientY, role);
     keepTrack(role, targetLane);
     const collisionStart = collisionFreeStart(clips, start, [{ lane: targetLane, role, offset: 0, duration }]);
-    commit([...clips, { id: crypto.randomUUID(), asset, start: collisionStart, duration, lane: targetLane, sourceDuration: duration, trimStart: 0, role }]);
+    const clipId = crypto.randomUUID();
+    commitDroppedClips([...clips, { id: clipId, asset, start: collisionStart, duration, lane: targetLane, sourceDuration: duration, trimStart: 0, role }], clipId, collisionStart);
   }
 
   function moveClip(id: string, clientX: number, clientY: number) {
@@ -428,6 +479,38 @@ export function TimelinePanel({ aslTrack, captionTrack, clips, error, files, onA
     }
   }
 
+  async function runLanguageTool(action: LanguageAction, language: string) {
+    const target = selectedGroup.find((clip) => clip.role === "visual") ?? selectedGroup.find((clip) => clip.role === "audio");
+    if (!target) return;
+    const sourceAssetId = target.asset.accessibilitySourceId ?? target.asset.id;
+    const sourceAsset = files.find((file) => file.id === sourceAssetId) ?? target.asset;
+    if (!sourceAsset.objectKey) return setVisionError("The selected clip is not uploaded");
+    setVisionError(undefined);
+    setLanguageWorking(action);
+    setVisionClipId(target.id);
+    try {
+      const response = await fetch("/api/language", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, language, projectId: target.asset.projectId, assetId: crypto.randomUUID(), sourceAssetId, sourceObjectKey: sourceAsset.objectKey, sourceGeneration: sourceAsset.generation, sourceDuration: sourceAsset.duration, sourceName: sourceAsset.name, folderId: target.asset.folderId, start: target.trimStart, end: target.trimStart + target.duration }) });
+      const body = await response.json() as { asset?: ProjectFile; cues?: TimelineCaptionTrack["cues"]; error?: string };
+      if (!response.ok) throw new Error(body.error || "Could not create language track");
+      if (action === "captions") {
+        if (!body.cues?.length) throw new Error("Translation returned no captions");
+        onCaptionsChange({ clipId: target.id, cues: body.cues, large: false, kind: "captions" });
+        return;
+      }
+      if (!body.asset?.duration) throw new Error("Translation returned no audio");
+      const lane = firstEmptyTrackLane(clips, "audio");
+      keepTrack("audio", lane);
+      onFilesChange([...files, body.asset]);
+      const next = action === "audio" ? clips.map((clip) => clip.role === "audio" && (clip.id === target.id || Boolean(target.linkId && clip.linkId === target.linkId)) ? { ...clip, volume: 0 } : clip) : clips;
+      commit([...next, { id: crypto.randomUUID(), asset: body.asset, start: target.start, duration: body.asset.duration, lane, sourceDuration: body.asset.duration, trimStart: 0, role: "audio", volume: 1 }]);
+    } catch (reason) {
+      setVisionError(reason instanceof Error ? reason.message : "Language generation failed");
+    } finally {
+      setLanguageWorking(undefined);
+      setVisionClipId(undefined);
+    }
+  }
+
   useTimelineShortcuts({ onDelete: deleteSelected, onDeselect: () => setSelectedId(undefined), onFit: fitTimeline, onRedo: redo, onSeek: (change) => onTimeChange(Math.max(0, Math.min(contentDuration, time + change))), onSetPlaying: onPlayingChange, onSplit: splitSelected, onTogglePlayback: () => onPlayingChange(!playing), onToggleSnapping: () => setSnapping((value) => !value), onUndo: undo, onZoom: (change) => setScale((value) => Math.max(1, Math.min(8, value + change))) });
 
   const clipHandlers: TimelineClipHandlers = { onBeginEdit: beginEdit, onEndEdit: finishEdit, onMove: moveClip, onSelect: setSelectedId, onTrim: trimClip };
@@ -437,9 +520,8 @@ export function TimelinePanel({ aslTrack, captionTrack, clips, error, files, onA
       <header data-mode={mode}>
         <section className={styles.toolGroup}>
           <strong>{modeLabel}</strong>
-          <button aria-label={`Ask ${modeLabel} Agent`} className={styles.askAgent} onClick={() => onAskAgent(mode, selectedClip ? [selectedClip.asset.name] : [])} title={`Ask ${modeLabel} Agent`} type="button"><SquarePen size={15} /></button>
-          {mode !== "edit" && <button aria-label="Delete selected clip" disabled={!selectedId || Boolean(visionWorking || hearingWorking || sensoryWorking)} onClick={() => deleteSelected()} title="Delete selected clip" type="button"><Trash2 size={15} /></button>}
-          {mode === "language" ? <TimelineLanguageTools clipSelected={Boolean(selectedClip)} /> : mode !== "edit" ? <TimelineAccessibilityTools clipSelected={mode === "hearing" ? selectedHearingMedia : modeClipSelected} mode={mode} noiseReduction={selectedClip?.asset.noiseReduction} onContrastChange={mode === "vision" ? setClipContrast : undefined} onHearingAction={mode === "hearing" ? (action, source) => void runHearingTool(action, source) : undefined} onNoiseReduction={mode === "hearing" ? (value) => void runNoiseReduction(value) : undefined} onSensoryAction={mode === "sensory" ? (action) => void runSensoryTool(action) : undefined} onVisionAction={mode === "vision" ? (action, preset) => void runVisionTool(action, preset) : undefined} visionAdjustments={selectedGroup.find((clip) => clip.role === "visual")?.visionAdjustments} working={mode === "hearing" ? hearingWorking : mode === "sensory" ? sensoryWorking : visionWorking} /> : <nav aria-label="Timeline edit tools">
+          <button aria-label={`Ask ${modeLabel} Agent`} className={styles.askAgent} onClick={() => onAskAgent(mode, selectedClip ? [selectedClip.asset.name] : [])} title={`Ask ${modeLabel} Agent`} type="button"><SquarePen size={15} /><span>{modeLabel} Agent</span></button>
+          {mode === "language" ? <TimelineLanguageTools clipSelected={Boolean(selectedClip)} onAction={(action, language) => void runLanguageTool(action, language)} working={languageWorking} /> : mode !== "edit" ? <TimelineAccessibilityTools clipSelected={mode === "hearing" ? selectedHearingMedia : modeClipSelected} mode={mode} noiseReduction={selectedClip?.asset.noiseReduction} onContrastChange={mode === "vision" ? setClipContrast : undefined} onHearingAction={mode === "hearing" ? (action, source) => void runHearingTool(action, source) : undefined} onNoiseReduction={mode === "hearing" ? (value) => void runNoiseReduction(value) : undefined} onSensoryAction={mode === "sensory" ? (action) => void runSensoryTool(action) : undefined} onVisionAction={mode === "vision" ? (action, preset) => void runVisionTool(action, preset) : undefined} visionAdjustments={selectedGroup.find((clip) => clip.role === "visual")?.visionAdjustments} working={mode === "hearing" ? hearingWorking : mode === "sensory" ? sensoryWorking : visionWorking} /> : <nav aria-label="Timeline edit tools">
             <button aria-label="Select" type="button"><MousePointer2 size={15} /></button>
             <button aria-keyshortcuts="Meta+Z Control+Z" aria-label="Undo" disabled={!undoCount} onClick={undo} type="button"><Undo2 size={15} /></button>
             <button aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z" aria-label="Redo" disabled={!redoCount} onClick={redo} type="button"><Redo2 size={15} /></button>
@@ -450,7 +532,7 @@ export function TimelinePanel({ aslTrack, captionTrack, clips, error, files, onA
           </nav>}
         </section>
         <section className={styles.playback}><button aria-keyshortcuts="Space" aria-label={playing ? "Pause" : "Play"} onClick={() => onPlayingChange(!playing)} type="button">{playing ? <Pause size={16} /> : <Play size={16} />}</button><time>{formatTimecode(time)}</time></section>
-        <section className={styles.toolGroup} data-end>{selectedClip?.role === "audio" && <TimelineClipVolumeControl name={selectedClip.asset.name} onChange={setClipVolume} value={selectedClip.volume ?? 1} />}<nav aria-label="Timeline view"><button aria-keyshortcuts="-" aria-label="Zoom out" disabled={scale <= 1} onClick={() => setScale((value) => Math.max(1, value - 1))} type="button"><ZoomOut size={15} /></button><button aria-keyshortcuts="0" aria-label="Fit timeline" onClick={fitTimeline} type="button"><Maximize2 size={15} /></button><button aria-keyshortcuts="+" aria-label="Zoom in" disabled={scale >= 8} onClick={() => setScale((value) => Math.min(8, value + 1))} type="button"><ZoomIn size={15} /></button></nav></section>
+        <section className={styles.toolGroup} data-end>{mode !== "edit" && <button aria-label="Delete selected clip" disabled={!selectedId || Boolean(visionWorking || hearingWorking || sensoryWorking)} onClick={() => deleteSelected()} title="Delete selected clip" type="button"><Trash2 size={15} /></button>}{selectedClip?.role === "audio" && <TimelineClipVolumeControl name={selectedClip.asset.name} onChange={setClipVolume} value={selectedClip.volume ?? 1} />}<nav aria-label="Timeline view"><button aria-keyshortcuts="-" aria-label="Zoom out" disabled={scale <= 1} onClick={() => setScale((value) => Math.max(1, value - 1))} type="button"><ZoomOut size={15} /></button><button aria-keyshortcuts="0" aria-label="Fit timeline" onClick={fitTimeline} type="button"><Maximize2 size={15} /></button><button aria-keyshortcuts="+" aria-label="Zoom in" disabled={scale >= 8} onClick={() => setScale((value) => Math.min(8, value + 1))} type="button"><ZoomIn size={15} /></button></nav><button aria-label="Export timeline as MP4" disabled={!clips.length || exporting} onClick={() => { setExportError(undefined); setExportOpen(true); }} title="Export timeline as MP4" type="button"><Download size={15} /></button></section>
       </header>
       <section className={styles.composition}>
         {(dropError || visionError || error) && <p className={styles.dropError} role="alert">{dropError || visionError || error}</p>}
@@ -461,6 +543,7 @@ export function TimelinePanel({ aslTrack, captionTrack, clips, error, files, onA
             <section className={styles.timelineCanvas} style={{ "--timeline-scale": scale } as CSSProperties}>
               <TimelineRuler duration={timelineDuration} scale={scale} />
               <section aria-label="Editable timeline" className={styles.canvas} onDragEnter={() => setDropActive(true)} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropActive(false); }} onDragOver={(event) => event.preventDefault()} onDrop={dropAsset} onPointerDown={startScrub} onPointerMove={scrub} ref={canvasRef}>
+                <TimelineAgentScan active={agentActive} />
                 {clips.map((clip) => <TimelineClipItem clip={clip} dragOffsetRef={dragOffset} handlers={clipHandlers} key={clip.id} processing={clip.id === visionClipId} selected={clip.id === selectedId} timelineDuration={timelineDuration} />)}
                 {!clips.length && <p className={styles.empty}>Drag media here</p>}
                 <button aria-label="Resize video and audio track areas" className={styles.avDivider} onPointerDown={resizeDivider} onPointerMove={resizeDivider} type="button" />
@@ -472,6 +555,7 @@ export function TimelinePanel({ aslTrack, captionTrack, clips, error, files, onA
         <TimelineHorizontalScrollbar scale={scale} viewportRef={viewportRef} />
       </section>
       <TimelineModeSwitcher onChange={setMode} selected={mode} />
+      {exportOpen && <TimelineExportModal busy={exporting} error={exportError} folders={folders} initialName="Untitled timeline" onCancel={() => setExportOpen(false)} onSave={(name, folderId) => void exportTimeline(name, folderId)} />}
     </section>
   );
 }

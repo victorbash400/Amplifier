@@ -1,49 +1,73 @@
+@property --assets-width {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --assets-gap {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --creator-width {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --creator-gap {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
 .workspace {
+  --assets-width: 0px;
+  --assets-gap: 0px;
+  --creator-width: 0px;
+  --creator-gap: 0px;
   display: grid;
   height: calc(100svh - 48px);
   min-height: 560px;
   padding: 10px;
   grid-template:
-    "preview" minmax(250px, 1fr)
-    "timeline" minmax(330px, 0.9fr)
-    / minmax(0, 1fr);
-  gap: 10px;
+    "assets assets-gap preview creator-gap creator" minmax(190px, var(--viewer-share, 48%))
+    "assets assets-gap resizer creator-gap creator" 10px
+    "assets assets-gap timeline creator-gap creator" minmax(260px, 1fr)
+    / var(--assets-width) var(--assets-gap) minmax(0, 1fr) var(--creator-gap) var(--creator-width);
+  row-gap: 0;
+  column-gap: 0;
   overflow: hidden;
   background: #f7f7f7;
+  transition: --assets-width 240ms cubic-bezier(.22, 1, .36, 1), --assets-gap 180ms ease, --creator-width 240ms cubic-bezier(.22, 1, .36, 1), --creator-gap 180ms ease;
 }
 
-.workspace[data-panel-layout="assets"] {
-  grid-template:
-    "assets preview" minmax(250px, 1fr)
-    "assets timeline" minmax(330px, 0.9fr)
-    / minmax(260px, 21vw) minmax(0, 1fr);
-}
-
-.workspace[data-panel-layout="creator"] {
-  grid-template:
-    "preview creator" minmax(250px, 1fr)
-    "timeline creator" minmax(330px, 0.9fr)
-    / minmax(0, 1fr) minmax(260px, 21vw);
-}
-
+.workspace[data-panel-layout="assets"],
 .workspace[data-panel-layout="both"] {
-  grid-template:
-    "assets preview creator" minmax(250px, 1fr)
-    "assets timeline creator" minmax(330px, 0.9fr)
-    / minmax(260px, 21vw) minmax(0, 1fr) minmax(260px, 21vw);
+  --assets-width: clamp(260px, 21vw, 360px);
+  --assets-gap: 10px;
+}
+
+.workspace[data-panel-layout="creator"],
+.workspace[data-panel-layout="both"] {
+  --creator-width: clamp(260px, 21vw, 360px);
+  --creator-gap: 10px;
 }
 
 @media (max-width: 900px) {
   .workspace[data-panel-layout="assets"],
   .workspace[data-panel-layout="both"] {
-    grid-template:
-      "assets preview" 340px
-      "assets timeline" minmax(240px, 1fr)
-      / 190px minmax(0, 1fr);
+    --assets-width: 190px;
   }
 
-  .workspace[data-panel-layout="creator"] > :global([aria-label="Creator"]),
-  .workspace[data-panel-layout="both"] > :global([aria-label="Creator"]) {
+  .workspace[data-panel-layout="creator"],
+  .workspace[data-panel-layout="both"] {
+    --creator-width: 0px;
+    --creator-gap: 0px;
+  }
+
+  .workspace > :global([aria-label="Creator"]) {
     position: fixed;
     top: 58px;
     right: 0;
@@ -52,6 +76,10 @@
     width: min(300px, calc(100vw - 40px));
     box-shadow: -12px 0 30px rgba(0, 0, 0, 0.08);
   }
+
+  .workspace > :global([aria-label="Creator"][hidden]) {
+    transform: translateX(calc(100% + 10px));
+  }
 }
 
 @media (max-width: 650px) {
@@ -59,15 +87,17 @@
   .workspace[data-panel-layout="assets"],
   .workspace[data-panel-layout="creator"],
   .workspace[data-panel-layout="both"] {
+    --assets-width: 0px;
+    --assets-gap: 0px;
     height: auto;
+    row-gap: 10px;
     grid-template:
       "preview" 340px
       "timeline" minmax(260px, 1fr)
       / 1fr;
   }
 
-  .workspace[data-panel-layout="assets"] > :global([aria-label="Assets"]),
-  .workspace[data-panel-layout="both"] > :global([aria-label="Assets"]) {
+  .workspace > :global([aria-label="Assets"]) {
     position: fixed;
     top: 58px;
     left: 0;
@@ -77,4 +107,13 @@
     width: min(280px, calc(100vw - 40px));
     box-shadow: 12px 0 30px rgba(0, 0, 0, 0.08);
   }
+
+  .workspace[data-panel-layout="none"] > :global([aria-label="Assets"]),
+  .workspace[data-panel-layout="creator"] > :global([aria-label="Assets"]) {
+    transform: translateX(calc(-100% - 10px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace { transition: none; }
 }
