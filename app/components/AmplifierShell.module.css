@@ -3,6 +3,18 @@
   background: #fff;
 }
 
+.shell[data-empty="true"] {
+  background: #fcfcfc url("/hello.png") center / contain no-repeat;
+}
+
+.shell[data-empty="true"] > header {
+  background: transparent;
+}
+
+.shell[data-empty="true"] > header > p {
+  visibility: hidden;
+}
+
 .formArea {
   display: grid;
   min-height: calc(100svh - 48px);

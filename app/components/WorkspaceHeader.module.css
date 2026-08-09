@@ -12,17 +12,20 @@
 }
 
 .header nav,
-.header nav button,
-.actions button {
+.header nav > button,
+.actions > button {
   display: flex;
   align-items: center;
 }
 
 .actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   justify-self: end;
 }
 
-.actions button,
+.actions > button,
 .header nav > button,
 .projectButton {
   height: 34px;
@@ -44,7 +47,7 @@
   place-items: center;
 }
 
-.actions button:hover,
+.actions > button:hover,
 .header nav > button:hover,
 .projectButton:hover {
   background: #f3f3f0;

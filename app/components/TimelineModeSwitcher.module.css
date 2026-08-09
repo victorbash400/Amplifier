@@ -1,13 +1,11 @@
 .switcher { display: flex; min-height: 48px; margin: 8px -9px -9px; padding: 0 16px; align-items: stretch; justify-content: center; gap: 14px; border-top: 1px solid #ededed; background: #fbfbfb; overflow-x: auto; }
-.mode { position: relative; display: grid; min-width: 72px; padding: 6px 5px 5px; grid-template-rows: 40px 12px; place-items: center; gap: 2px; border: 0; background: transparent; color: #8a8a86; cursor: pointer; }
-.mode::after { position: absolute; right: 5px; bottom: 0; left: 5px; height: 2px; border-radius: 2px 2px 0 0; background: transparent; content: ""; }
+.mode { position: relative; display: grid; min-width: 72px; padding: 6px 5px 5px; grid-template-rows: 40px 12px; place-items: center; gap: 2px; border: 0; border-radius: 8px; background: transparent; color: #8a8a86; cursor: pointer; transition: background 150ms ease, color 150ms ease; }
 .mode img { opacity: .62; }
 .pairedIcons { display: flex; height: 40px; align-items: center; justify-content: center; gap: 2px; }
 .mode span { font-size: 8px; font-weight: 600; line-height: 12px; white-space: nowrap; }
-.mode:hover { color: #3f4942; }
+.mode:hover { background: #f1f3f0; color: #3f4942; }
 .mode:hover img { opacity: .82; }
-.mode[aria-pressed="true"] { color: #405649; }
-.mode[aria-pressed="true"]::after { background: #708878; }
+.mode[aria-pressed="true"] { background: #e5ece7; color: #405649; }
 .mode[aria-pressed="true"] img { opacity: 1; }
 
 @media (max-width: 820px) {

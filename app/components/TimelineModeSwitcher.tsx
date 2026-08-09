@@ -8,7 +8,7 @@ const modes = [
   { id: "vision", label: "Vision", icons: ["/accessible-media-icons/blind-eyes-svgrepo-com.svg"] },
   { id: "hearing", label: "Hearing", icons: ["/accessible-media-icons/deaf-solid-svgrepo-com.svg"] },
   { id: "deafblind", label: "Deafblind", icons: ["/accessible-media-icons/blind-eyes-svgrepo-com.svg", "/accessible-media-icons/deaf-solid-svgrepo-com.svg"] },
-  { id: "sensory", label: "Sensory", icons: ["/accessible-media-icons/sensory.svg"] },
+  { id: "sensory", label: "Sensory", icons: ["/accessible-media-icons/brain-svgrepo-com.svg"] },
   { id: "language", label: "Language", icons: ["/accessible-media-icons/language-svgrepo-com.svg"] },
 ] as const;
 
