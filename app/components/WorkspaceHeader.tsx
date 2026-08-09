@@ -1,4 +1,5 @@
 import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus } from "lucide-react";
+import { AccountButton } from "./AccountButton";
 import { AmplifierBrand } from "./AmplifierBrand";
 import { FolderIcon } from "./icons/FolderIcon";
 import styles from "./WorkspaceHeader.module.css";
@@ -11,9 +12,10 @@ type WorkspaceHeaderProps = {
   onNewProject: () => void;
   onToggleAssets: () => void;
   onToggleCreator: () => void;
+  userName: string;
 };
 
-export function WorkspaceHeader({ assetsOpen, creatorOpen, projectOpen, onHome, onNewProject, onToggleAssets, onToggleCreator }: WorkspaceHeaderProps) {
+export function WorkspaceHeader({ assetsOpen, creatorOpen, projectOpen, userName, onHome, onNewProject, onToggleAssets, onToggleCreator }: WorkspaceHeaderProps) {
   return (
     <header className={styles.header} data-workspace={projectOpen}>
       <nav aria-label="Project navigation">
@@ -21,7 +23,7 @@ export function WorkspaceHeader({ assetsOpen, creatorOpen, projectOpen, onHome, 
       </nav>
       <AmplifierBrand />
       <nav className={styles.actions} aria-label="Workspace actions">
-        {projectOpen ? <button aria-pressed={creatorOpen} onClick={onToggleCreator} type="button">{creatorOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}Creator</button> : <button onClick={onNewProject} type="button"><Plus size={15} />New project</button>}
+        {projectOpen ? <button aria-pressed={creatorOpen} onClick={onToggleCreator} type="button">{creatorOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}Creator</button> : <button onClick={onNewProject} type="button"><Plus size={15} />New project</button>}<AccountButton name={userName} />
       </nav>
     </header>
   );

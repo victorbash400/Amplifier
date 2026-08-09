@@ -27,6 +27,7 @@ class Settings:
     clickhouse_password: str
     clickhouse_database: str
     agent_session_database_url: str
+    internal_secret: str
 
 
 settings = Settings(
@@ -43,6 +44,7 @@ settings = Settings(
         "AMPLIFIER_AGENT_SESSION_DATABASE_URL",
         f"sqlite+aiosqlite:///{backend_root / 'amplifier_sessions.db'}",
     ),
+    internal_secret=environment("AMPLIFIER_INTERNAL_SECRET"),
 )
 
 os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "TRUE"

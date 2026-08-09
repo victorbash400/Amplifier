@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist } from "next/font/google";
+import { AuthSessionProvider } from "./components/AuthSessionProvider";
 import "./globals.css";
 
 const geist = Geist({
@@ -23,7 +24,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={geist.variable}>{children}</body>
+      <body className={geist.variable}><AuthSessionProvider>{children}</AuthSessionProvider></body>
     </html>
   );
 }

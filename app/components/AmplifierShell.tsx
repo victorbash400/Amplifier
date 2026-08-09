@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { folderColors } from "./icons/FolderIcon";
 import { NewProjectForm } from "./NewProjectForm";
 import { ProjectList } from "./ProjectList";
@@ -12,7 +12,7 @@ import styles from "./AmplifierShell.module.css";
 
 const initialData: WorkspaceData = { projects: [], folders: [], files: [] };
 
-export function AmplifierShell() {
+export function AmplifierShell({ userName }: { userName: string }) {
   const [data, setData] = useState<WorkspaceData>(initialData);
   const [loaded, setLoaded] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -20,11 +20,12 @@ export function AmplifierShell() {
   const [assetsOpen, setAssetsOpen] = useState(true);
   const [creatorOpen, setCreatorOpen] = useState(false);
   const [error, setError] = useState<string>();
+  const saveQueue = useRef(Promise.resolve());
 
   useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
+    const frame = window.requestAnimationFrame(async () => {
       try {
-        const workspace = loadWorkspace();
+        const workspace = await loadWorkspace();
         const requestedId = new URLSearchParams(window.location.search).get("project") || undefined;
         setData(workspace);
         setActiveProjectId(workspace.projects.some((project) => project.id === requestedId) ? requestedId : undefined);
@@ -49,13 +50,9 @@ export function AmplifierShell() {
   function updateData(update: (current: WorkspaceData) => WorkspaceData) {
     setData((current) => {
       const next = update(current);
-      try {
-        saveWorkspace(next);
-        setError(undefined);
-      } catch {
-        setError("Could not save the workspace.");
-        return current;
-      }
+      saveQueue.current = saveQueue.current.then(() => saveWorkspace(next)).then(() => setError(undefined)).catch((reason) => {
+        setError(reason instanceof Error ? reason.message : "Could not save the workspace.");
+      });
       return next;
     });
   }
@@ -96,7 +93,8 @@ export function AmplifierShell() {
   }
 
   const activeProject = data.projects.find((project) => project.id === activeProjectId);
+  const emptyState = !creating && !activeProject && data.projects.length === 0;
   if (!loaded) return null;
 
-  return <main className={styles.shell}><WorkspaceHeader assetsOpen={assetsOpen} creatorOpen={creatorOpen} onHome={openHome} onNewProject={() => setCreating(true)} onToggleAssets={() => setAssetsOpen((current) => !current)} onToggleCreator={() => setCreatorOpen((current) => !current)} projectOpen={Boolean(activeProject)} />{creating ? <section className={styles.formArea}><NewProjectForm onCancel={() => setCreating(false)} onCreate={createProject} /></section> : activeProject ? <ProjectWorkspace assetsOpen={assetsOpen} creatorOpen={creatorOpen} files={data.files.filter((file) => file.projectId === activeProject.id)} folders={data.folders.filter((folder) => folder.projectId === activeProject.id)} key={activeProject.id} onFilesChange={updateFiles} onFoldersChange={updateFolders} onOpenCreator={() => setCreatorOpen(true)} project={activeProject} /> : <ProjectList onDelete={deleteProject} onOpen={openProject} projects={data.projects} />}{error && <p className={styles.error} role="alert">{error}</p>}</main>;
+  return <main className={styles.shell} data-empty={emptyState}><WorkspaceHeader assetsOpen={assetsOpen} creatorOpen={creatorOpen} onHome={openHome} onNewProject={() => setCreating(true)} onToggleAssets={() => setAssetsOpen((current) => !current)} onToggleCreator={() => setCreatorOpen((current) => !current)} projectOpen={Boolean(activeProject)} userName={userName} />{creating ? <section className={styles.formArea}><NewProjectForm onCancel={() => setCreating(false)} onCreate={createProject} /></section> : activeProject ? <ProjectWorkspace assetsOpen={assetsOpen} creatorOpen={creatorOpen} files={data.files.filter((file) => file.projectId === activeProject.id)} folders={data.folders.filter((folder) => folder.projectId === activeProject.id)} key={activeProject.id} onFilesChange={updateFiles} onFoldersChange={updateFolders} onOpenCreator={() => setCreatorOpen(true)} project={activeProject} /> : <ProjectList onDelete={deleteProject} onOpen={openProject} projects={data.projects} />}{error && <p className={styles.error} role="alert">{error}</p>}</main>;
 }

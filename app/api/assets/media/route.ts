@@ -1,6 +1,10 @@
+import { authenticatedBackendContext } from "@/app/lib/session";
+
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
+  const context = await authenticatedBackendContext(request);
+  if (!context) return Response.json({ error: "Authentication required" }, { status: 401 });
   const url = new URL(request.url);
   const projectId = url.searchParams.get("projectId");
   const objectKey = url.searchParams.get("objectKey");
@@ -11,7 +15,7 @@ export async function GET(request: Request) {
   endpoint.searchParams.set("object_key", objectKey);
   const range = request.headers.get("Range");
   if (range) endpoint.searchParams.set("range", range);
-  const response = await fetch(endpoint, { cache: "no-store" });
+  const response = await fetch(endpoint, { cache: "no-store", headers: context.headers });
   if (!response.ok || !response.body) {
     const body = await response.json().catch(() => ({ detail: "Could not load asset" })) as { detail?: string };
     return Response.json({ error: body.detail || "Could not load asset" }, { status: response.status });

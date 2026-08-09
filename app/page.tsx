@@ -1,5 +1,5 @@
-import { AmplifierShell } from "./components/AmplifierShell";
+import { AuthenticatedAmplifier } from "./components/AuthenticatedAmplifier";
 
 export default function Home() {
-  return <AmplifierShell />;
+  return <AuthenticatedAmplifier />;
 }
