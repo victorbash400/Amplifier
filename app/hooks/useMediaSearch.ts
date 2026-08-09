@@ -13,6 +13,7 @@ export function useMediaSearch(projectId: string, files: ProjectFile[], active: 
   const [loadedStatusKey, setLoadedStatusKey] = useState<string>();
   const [results, setResults] = useState<MediaSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string>();
   const [skipped, setSkipped] = useState<Set<string>>(() => new Set());
   const [retrying, setRetrying] = useState<Set<string>>(() => new Set());
@@ -28,6 +29,19 @@ export function useMediaSearch(projectId: string, files: ProjectFile[], active: 
     if (!response.ok || !body.assets) throw new Error(body.error || "Could not load media search index");
     return Object.fromEntries(body.assets.map((state) => [state.asset_id, { assetId: state.asset_id, name: state.name, status: state.status, stage: state.stage, error: state.error, updatedAt: state.updated_at }]));
   }, [projectId]);
+
+  const refreshStatus = useCallback(async () => {
+    setRefreshing(true);
+    setError(undefined);
+    try {
+      setStates(await loadStatus());
+      setLoadedStatusKey(statusKey);
+    } catch (reason) {
+      setError(message(reason));
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadStatus, statusKey]);
 
   useEffect(() => {
     if (!active) return;
@@ -86,7 +100,8 @@ export function useMediaSearch(projectId: string, files: ProjectFile[], active: 
     if (cleanQuery.length < 2) return;
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
-      const cached = cache.current.get(cleanQuery);
+      const cacheKey = `${statusKey}:${cleanQuery}`;
+      const cached = cache.current.get(cacheKey);
       if (cached) {
         setResults(cached);
         return;
@@ -98,7 +113,7 @@ export function useMediaSearch(projectId: string, files: ProjectFile[], active: 
         const body = await response.json() as { results?: Array<{ moment_id: string; asset_id: string; asset_name: string; object_key: string; content_type: string; folder_id: string; thumbnail_key: string; description: string; transcript: string; start: number; end: number; score: number }>; error?: string };
         if (!response.ok || !body.results) throw new Error(body.error || "Media search failed");
         const next = body.results.map((result) => ({ momentId: result.moment_id, assetId: result.asset_id, assetName: result.asset_name, objectKey: result.object_key, contentType: result.content_type, folderId: result.folder_id, thumbnailKey: result.thumbnail_key, description: result.description, transcript: result.transcript, start: result.start, end: result.end, score: result.score }));
-        cache.current.set(cleanQuery, next);
+        cache.current.set(cacheKey, next);
         setResults(next);
       } catch (reason) {
         if (!(reason instanceof DOMException && reason.name === "AbortError")) setError(message(reason));
@@ -107,7 +122,7 @@ export function useMediaSearch(projectId: string, files: ProjectFile[], active: 
       }
     }, searchDelay);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [active, projectId, query]);
+  }, [active, projectId, query, statusKey]);
 
   const retry = useCallback((assetId: string) => {
     setError(undefined);
@@ -124,7 +139,7 @@ export function useMediaSearch(projectId: string, files: ProjectFile[], active: 
     setRetrying((current) => new Set([...current, ...skipped]));
     setSkipped(new Set());
   }, [skipped]);
-  return { checking: active && loadedStatusKey !== statusKey, error: active ? error : undefined, failed, indexingCount, ready, results: active && query.trim().length >= 2 ? results : [], retry, retrySkipped, searching, skipFailed, skippedCount, states, total: searchableFiles.length };
+  return { checking: active && loadedStatusKey !== statusKey, error: active ? error : undefined, failed, indexingCount, ready, refreshStatus, refreshing, results: active && query.trim().length >= 2 ? results : [], retry, retrySkipped, searching, skipFailed, skippedCount, states, total: searchableFiles.length };
 }
 
 async function readIndexEvents(stream: ReadableStream<Uint8Array>, onEvent: (event: { status: MediaAssetState["status"]; stage: string; progress?: number; error?: string }) => void) {

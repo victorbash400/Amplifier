@@ -25,11 +25,12 @@
 .skeletons { display: grid; align-content: start; gap: 8px; }
 .skeletons li { height: 54px; border-radius: 9px; background: linear-gradient(100deg, #f5f5f3 20%, #ececea 40%, #f5f5f3 60%); background-size: 220% 100%; animation: search-shimmer 1.35s ease-in-out infinite; }
 @keyframes search-shimmer { to { background-position-x: -220%; } }
-.indexState { display: grid; min-height: 0; padding: 16px 4px 4px; grid-template-rows: auto minmax(0, 1fr); flex: 1; gap: 12px; overflow: hidden; }
-.indexState header { display: flex; padding: 0 7px; align-items: center; gap: 9px; }
-.indexState header > span { display: grid; gap: 2px; }
-.indexState header strong { color: #4c4c48; font-size: 11px; font-weight: 620; }
-.indexState header small { color: #969691; font-size: 8px; }
+.indexState { display: grid; min-height: 0; padding: 16px 4px 4px; grid-template-rows: minmax(0, 1fr); flex: 1; overflow: hidden; }
+.panel footer .refreshButton { display: grid; width: 24px; height: 24px; margin-left: auto; padding: 0; flex: 0 0 24px; place-items: center; color: #777772; }
+.panel footer .refreshButton:disabled { cursor: default; opacity: .45; }
+.refreshing { animation: refresh-spin .7s linear infinite; }
+@keyframes refresh-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .refreshing { animation: none; } }
 .indexList { min-height: 0; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
 .indexList li { display: grid; min-height: 38px; padding: 5px 9px; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; border-radius: 8px; }
 .indexList li:nth-child(odd) { background: #f2f2ef; }

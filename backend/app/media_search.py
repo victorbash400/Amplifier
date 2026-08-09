@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import hashlib
 import json
 import math
@@ -24,7 +24,6 @@ SEARCH_SCHEMA_VERSION = 3
 SEARCH_EMBEDDING_MODEL = "gemini-embedding-2"
 SEARCH_ANALYSIS_MODEL = INDEX_ANALYSIS_MODEL
 SEARCH_VECTOR_DIMENSIONS = 768
-STALE_INDEX_AFTER = timedelta(minutes=10)
 
 _schema_lock = asyncio.Lock()
 _schema_ready = False
@@ -89,12 +88,12 @@ async def index_status(project_id: str) -> list[dict[str, object]]:
             "SELECT asset_id, asset_name, status, stage, error, updated_at FROM asset_search_index FINAL WHERE project_id = {project_id:String} AND schema_version = {schema_version:UInt16}",
             parameters={"project_id": project_id, "schema_version": SEARCH_SCHEMA_VERSION},
         )
-        now = datetime.now(timezone.utc)
         states = []
         for row in result.result_rows:
             updated_at = row[5].replace(tzinfo=timezone.utc) if row[5].tzinfo is None else row[5]
-            stale = row[2] == "indexing" and now - updated_at > STALE_INDEX_AFTER
-            states.append({"asset_id": row[0], "name": row[1], "status": "failed" if stale else row[2], "stage": "Interrupted" if stale else row[3], "updated_at": updated_at.isoformat(), **({"error": "Indexing was interrupted; retry this file"} if stale else ({"error": row[4]} if row[4] else {}))})
+            active_lock = _asset_locks.get((project_id, row[0]))
+            interrupted = row[2] == "indexing" and not (active_lock and active_lock.locked())
+            states.append({"asset_id": row[0], "name": row[1], "status": "failed" if interrupted else row[2], "stage": "Interrupted" if interrupted else row[3], "updated_at": updated_at.isoformat(), **({"error": "Indexing was interrupted; retry this file"} if interrupted else ({"error": row[4]} if row[4] else {}))})
         return states
     finally:
         await client.close()
@@ -195,14 +194,13 @@ async def _embed_documents(documents: list[str]) -> list[list[float]]:
 
 async def _embed_contents(contents: list[str], task_type: str) -> list[list[float]]:
     client = genai.Client(vertexai=True, project=settings.google_cloud_project, location=settings.google_cloud_location)
-    semaphore = asyncio.Semaphore(4)
-    async def embed(content: str) -> list[float]:
-        async with semaphore:
-            response = await client.aio.models.embed_content(model=SEARCH_EMBEDDING_MODEL, contents=content, config=types.EmbedContentConfig(task_type=task_type, output_dimensionality=SEARCH_VECTOR_DIMENSIONS))
-        values = response.embeddings[0].values if response.embeddings else None
-        return _normalized_vector(values)
     try:
-        embeddings = await asyncio.gather(*(embed(content) for content in contents))
+        embeddings: list[list[float]] = []
+        for offset in range(0, len(contents), 100):
+            response = await client.aio.models.embed_content(model=SEARCH_EMBEDDING_MODEL, contents=contents[offset:offset + 100], config=types.EmbedContentConfig(task_type=task_type, output_dimensionality=SEARCH_VECTOR_DIMENSIONS))
+            if not response.embeddings or len(response.embeddings) != len(contents[offset:offset + 100]):
+                raise RuntimeError("Embedding model did not return one vector per media moment")
+            embeddings.extend(_normalized_vector(item.values) for item in response.embeddings)
     finally:
         await client.aio.aclose()
     return embeddings

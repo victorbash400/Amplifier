@@ -11,13 +11,12 @@ export async function uploadProjectAsset({ assetId, file, folderId, localUrl, on
   const session = await request<UploadSession>("POST", { projectId, assetId, fileName: file.name, contentType: file.type || "application/octet-stream", size: file.size });
   await uploadChunks(session.upload_url, file, onProgress);
   const completed = await request<CompletedUpload>("PATCH", { projectId, assetId, fileName: file.name, size: file.size });
-  return { id: assetId, projectId, folderId, name: file.name, size: completed.size, type: completed.content_type, objectKey: completed.object_key, generation: completed.generation, localUrl, ...metadata, ...(completed.has_audio === null ? {} : { hasAudio: completed.has_audio, audioProbe: "ffprobe" as const }) };
+  return { id: assetId, projectId, folderId, name: file.name, size: completed.size, type: completed.content_type, objectKey: completed.object_key, generation: completed.generation, ...metadata, ...(completed.has_audio === null ? {} : { hasAudio: completed.has_audio, audioProbe: "ffprobe" as const }) };
 }
 
 export function assetUrl(file: ProjectFile) {
-  if (file.localUrl) return file.localUrl;
-  if (!file.objectKey) return "";
-  return `/api/assets/media?projectId=${encodeURIComponent(file.projectId)}&objectKey=${encodeURIComponent(file.objectKey)}`;
+  if (file.objectKey) return `/api/assets/media?projectId=${encodeURIComponent(file.projectId)}&objectKey=${encodeURIComponent(file.objectKey)}`;
+  return file.localUrl ?? "";
 }
 
 export function readMediaDuration(url: string, contentType: string) {
