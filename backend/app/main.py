@@ -13,6 +13,7 @@ from app.braille import braille_transcript
 from app.clickhouse import check_clickhouse
 from app.hearing_tools import reduce_background_noise
 from app.media_search import asset_transcript, index_asset, index_status, remove_asset_index, search_assets
+from app.sensory_tools import generate_sensory_video
 from app.transcript_service import transcript_for_asset
 from app.vision_tools import generate_vision_filter, generate_vision_narration
 
@@ -25,14 +26,14 @@ class ChatRequest(BaseModel):
     user_id: str = Field(default="local-user", min_length=1)
     session_id: str = Field(min_length=1)
     message: str = Field(min_length=1)
-    agent_id: str = Field(default="general", pattern=r"^(general|edit|vision|hearing|deafblind|cognitive|vision-cognitive|hearing-cognitive|deafblind-cognitive|sensory)$")
+    agent_id: str = Field(default="general", pattern=r"^(general|edit|vision|hearing|deafblind|sensory|language)$")
 
 
 class BranchChatRequest(BaseModel):
     user_id: str = Field(default="local-user", min_length=1)
     source_session_id: str = Field(min_length=1)
     target_session_id: str = Field(min_length=1)
-    agent_id: str = Field(default="general", pattern=r"^(general|edit|vision|hearing|deafblind|cognitive|vision-cognitive|hearing-cognitive|deafblind-cognitive|sensory)$")
+    agent_id: str = Field(default="general", pattern=r"^(general|edit|vision|hearing|deafblind|sensory|language)$")
 
 
 class AssetUploadRequest(BaseModel):
@@ -130,6 +131,18 @@ class NoiseReductionRequest(BaseModel):
     folder_id: str = Field(default="root", min_length=1, max_length=100)
     strength: float = Field(ge=0, le=1)
     duration: float | None = Field(default=None, ge=0)
+
+
+class SensoryVideoRequest(BaseModel):
+    project_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    asset_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    source_asset_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    source_object_key: str = Field(min_length=1, max_length=1024)
+    source_name: str = Field(min_length=1, max_length=255)
+    folder_id: str = Field(default="root", min_length=1, max_length=100)
+    action: str = Field(pattern=r"^(reduce-flash|reduce-motion|stabilize|fewer-cuts|less-stimulus|static-version)$")
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
 
 
 @app.get("/health")
@@ -335,6 +348,18 @@ async def create_asl_track(body: AslTrackRequest) -> dict[str, object]:
 async def create_noise_reduced_asset(body: NoiseReductionRequest) -> dict[str, object]:
     try:
         return {"asset": await reduce_background_noise(**body.model_dump())}
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@app.post("/sensory/video")
+async def create_sensory_video(body: SensoryVideoRequest) -> dict[str, object]:
+    if body.end <= body.start:
+        raise HTTPException(status_code=400, detail="The selected clip range is invalid")
+    try:
+        return {"asset": await generate_sensory_video(**body.model_dump())}
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:

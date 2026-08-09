@@ -11,9 +11,11 @@ import { deleteTimelineClip, moveTimelineClip, snapTimelineTime, splitTimelineCl
 import { TimelineClipItem, type TimelineClipHandlers } from "./TimelineClipItem";
 import { TimelineModeSwitcher, type TimelineMode } from "./TimelineModeSwitcher";
 import { TimelineAccessibilityTools, type HearingToolAction, type VisionColorPreset, type VisionToolAction } from "./TimelineAccessibilityTools";
+import type { SensoryToolAction } from "./TimelineAccessibilityTools";
 import type { AslSource } from "./TimelineAslSourcePicker";
 import { TimelineClipVolumeControl } from "./TimelineClipVolumeControl";
 import { TimelineHorizontalScrollbar } from "./TimelineHorizontalScrollbar";
+import { TimelineLanguageTools } from "./TimelineLanguageTools";
 import { TimelineRuler, formatTimecode } from "./TimelineRuler";
 import { TimelineTrackHeaders } from "./TimelineTrackHeaders";
 import { buildTimelineTracks, firstEmptyTrackLane, type TimelineTrack, type TimelineTrackCounts } from "./timelineTracks";
@@ -65,6 +67,7 @@ export function TimelinePanel({ aslTrack, captionTrack, clips, error, files, onA
   const [mode, setMode] = useState<TimelineMode>("edit");
   const [visionWorking, setVisionWorking] = useState<VisionToolAction>();
   const [hearingWorking, setHearingWorking] = useState<HearingToolAction>();
+  const [sensoryWorking, setSensoryWorking] = useState<SensoryToolAction>();
   const [visionClipId, setVisionClipId] = useState<string>();
   const [visionError, setVisionError] = useState<string>();
   const timelineDuration = Math.max(baseDuration, ...clips.map((clip) => clip.start + clip.duration + trailingRoom));
@@ -75,8 +78,8 @@ export function TimelinePanel({ aslTrack, captionTrack, clips, error, files, onA
   const selectedHasVisual = selectedGroup.some((clip) => clip.role === "visual");
   const selectedHasAudio = selectedGroup.some((clip) => clip.role === "audio");
   const selectedHearingMedia = selectedGroup.some((clip) => clip.asset.type.startsWith("audio/") || clip.asset.type.startsWith("video/"));
-  const modeClipSelected = mode === "vision" || mode === "vision-cognitive" ? selectedHasVisual : mode === "hearing" || mode === "hearing-cognitive" ? selectedHasAudio : Boolean(selectedClip);
-  const modeLabel = mode === "vision-cognitive" ? "Vision + Cognitive" : mode === "hearing-cognitive" ? "Hearing + Cognitive" : mode === "deafblind-cognitive" ? "Deafblind + Cognitive" : `${mode.charAt(0).toUpperCase()}${mode.slice(1)}`;
+  const modeClipSelected = mode === "vision" || mode === "sensory" ? selectedHasVisual : mode === "hearing" ? selectedHasAudio : Boolean(selectedClip);
+  const modeLabel = `${mode.charAt(0).toUpperCase()}${mode.slice(1)}`;
 
   useEffect(() => { playbackTime.current = time; }, [time]);
 
@@ -401,6 +404,30 @@ export function TimelinePanel({ aslTrack, captionTrack, clips, error, files, onA
     }
   }
 
+  async function runSensoryTool(action: SensoryToolAction) {
+    const visual = selectedGroup.find((clip) => clip.role === "visual");
+    if (visual && !visual.asset.type.startsWith("video/")) return setVisionError("Sensory remaking requires a video clip");
+    if (!visual?.asset.objectKey) return setVisionError("The selected video is not uploaded");
+    setVisionError(undefined);
+    setSensoryWorking(action);
+    setVisionClipId(visual.id);
+    try {
+      const assetId = crypto.randomUUID();
+      const response = await fetch("/api/sensory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, projectId: visual.asset.projectId, assetId, sourceAssetId: visual.asset.accessibilitySourceId ?? visual.asset.id, sourceObjectKey: visual.asset.objectKey, sourceName: visual.asset.name, folderId: visual.asset.folderId, start: visual.trimStart, end: visual.trimStart + visual.duration }) });
+      const body = await response.json() as { asset?: ProjectFile; error?: string };
+      if (!response.ok || !body.asset?.duration) throw new Error(body.error || "Could not create sensory-safe video");
+      const lane = firstEmptyTrackLane(clips, "visual");
+      keepTrack("visual", lane);
+      onFilesChange([...files, body.asset]);
+      commit([...clips, { id: crypto.randomUUID(), asset: body.asset, start: visual.start, duration: visual.duration, lane, sourceDuration: body.asset.duration, trimStart: 0, role: "visual" }]);
+    } catch (reason) {
+      setVisionError(reason instanceof Error ? reason.message : "Sensory video generation failed");
+    } finally {
+      setSensoryWorking(undefined);
+      setVisionClipId(undefined);
+    }
+  }
+
   useTimelineShortcuts({ onDelete: deleteSelected, onDeselect: () => setSelectedId(undefined), onFit: fitTimeline, onRedo: redo, onSeek: (change) => onTimeChange(Math.max(0, Math.min(contentDuration, time + change))), onSetPlaying: onPlayingChange, onSplit: splitSelected, onTogglePlayback: () => onPlayingChange(!playing), onToggleSnapping: () => setSnapping((value) => !value), onUndo: undo, onZoom: (change) => setScale((value) => Math.max(1, Math.min(8, value + change))) });
 
   const clipHandlers: TimelineClipHandlers = { onBeginEdit: beginEdit, onEndEdit: finishEdit, onMove: moveClip, onSelect: setSelectedId, onTrim: trimClip };
@@ -411,8 +438,8 @@ export function TimelinePanel({ aslTrack, captionTrack, clips, error, files, onA
         <section className={styles.toolGroup}>
           <strong>{modeLabel}</strong>
           <button aria-label={`Ask ${modeLabel} Agent`} className={styles.askAgent} onClick={() => onAskAgent(mode, selectedClip ? [selectedClip.asset.name] : [])} title={`Ask ${modeLabel} Agent`} type="button"><SquarePen size={15} /></button>
-          {mode !== "edit" && <button aria-label="Delete selected clip" disabled={!selectedId || Boolean(visionWorking || hearingWorking)} onClick={() => deleteSelected()} title="Delete selected clip" type="button"><Trash2 size={15} /></button>}
-          {mode !== "edit" ? <TimelineAccessibilityTools clipSelected={mode === "hearing" ? selectedHearingMedia : modeClipSelected} mode={mode} noiseReduction={selectedClip?.asset.noiseReduction} onContrastChange={mode === "vision" ? setClipContrast : undefined} onHearingAction={mode === "hearing" ? (action, source) => void runHearingTool(action, source) : undefined} onNoiseReduction={mode === "hearing" ? (value) => void runNoiseReduction(value) : undefined} onVisionAction={mode === "vision" ? (action, preset) => void runVisionTool(action, preset) : undefined} visionAdjustments={selectedGroup.find((clip) => clip.role === "visual")?.visionAdjustments} working={mode === "hearing" ? hearingWorking : visionWorking} /> : <nav aria-label="Timeline edit tools">
+          {mode !== "edit" && <button aria-label="Delete selected clip" disabled={!selectedId || Boolean(visionWorking || hearingWorking || sensoryWorking)} onClick={() => deleteSelected()} title="Delete selected clip" type="button"><Trash2 size={15} /></button>}
+          {mode === "language" ? <TimelineLanguageTools clipSelected={Boolean(selectedClip)} /> : mode !== "edit" ? <TimelineAccessibilityTools clipSelected={mode === "hearing" ? selectedHearingMedia : modeClipSelected} mode={mode} noiseReduction={selectedClip?.asset.noiseReduction} onContrastChange={mode === "vision" ? setClipContrast : undefined} onHearingAction={mode === "hearing" ? (action, source) => void runHearingTool(action, source) : undefined} onNoiseReduction={mode === "hearing" ? (value) => void runNoiseReduction(value) : undefined} onSensoryAction={mode === "sensory" ? (action) => void runSensoryTool(action) : undefined} onVisionAction={mode === "vision" ? (action, preset) => void runVisionTool(action, preset) : undefined} visionAdjustments={selectedGroup.find((clip) => clip.role === "visual")?.visionAdjustments} working={mode === "hearing" ? hearingWorking : mode === "sensory" ? sensoryWorking : visionWorking} /> : <nav aria-label="Timeline edit tools">
             <button aria-label="Select" type="button"><MousePointer2 size={15} /></button>
             <button aria-keyshortcuts="Meta+Z Control+Z" aria-label="Undo" disabled={!undoCount} onClick={undo} type="button"><Undo2 size={15} /></button>
             <button aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z" aria-label="Redo" disabled={!redoCount} onClick={redo} type="button"><Redo2 size={15} /></button>

@@ -20,6 +20,9 @@
 .timeline > header .accessibilityTools::-webkit-scrollbar { display: none; }
 .timeline > header .accessibilityTools button { width: 52px; height: 38px; flex: 0 0 52px; grid-template-rows: 17px 11px; align-content: center; }
 .accessibilityTools button span { overflow: hidden; font-size: 7px; font-weight: 600; line-height: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.languagePicker { display: grid; width: 130px; height: 28px; flex: 0 0 130px; padding: 0 7px; grid-template-columns: 15px minmax(0, 1fr); align-items: center; gap: 6px; border: 1px solid #e0e2df; border-radius: 7px; background: #fafbfa; }
+.languagePicker select { min-width: 0; border: 0; outline: 0; background: transparent; color: #555; font: inherit; font-size: 9px; }
+.languagePicker:has(select:disabled) { opacity: .35; }
 .contrastControl { display: grid; width: 132px; height: 38px; flex: 0 0 132px; grid-template-columns: 15px minmax(52px, 1fr) 25px 20px; align-items: center; gap: 4px; color: #727572; }
 .contrastControl:has(input:disabled) { opacity: .35; }
 .contrastControl input { min-width: 0; accent-color: #69786d; }

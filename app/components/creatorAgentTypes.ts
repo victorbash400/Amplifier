@@ -14,11 +14,8 @@ const agentNames: Record<CreatorAgentId, string> = {
   vision: "Vision Agent",
   hearing: "Hearing Agent",
   deafblind: "Deafblind Agent",
-  cognitive: "Cognitive Agent",
-  "vision-cognitive": "Vision + Cognitive Agent",
-  "hearing-cognitive": "Hearing + Cognitive Agent",
-  "deafblind-cognitive": "Deafblind + Cognitive Agent",
   sensory: "Sensory Agent",
+  language: "Language Agent",
 };
 
 export function creatorAgentName(agentId: CreatorAgentId) {

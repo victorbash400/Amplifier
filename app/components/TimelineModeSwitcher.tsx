@@ -8,11 +8,8 @@ const modes = [
   { id: "vision", label: "Vision", icons: ["/accessible-media-icons/blind-eyes-svgrepo-com.svg"] },
   { id: "hearing", label: "Hearing", icons: ["/accessible-media-icons/deaf-solid-svgrepo-com.svg"] },
   { id: "deafblind", label: "Deafblind", icons: ["/accessible-media-icons/blind-eyes-svgrepo-com.svg", "/accessible-media-icons/deaf-solid-svgrepo-com.svg"] },
-  { id: "cognitive", label: "Cognitive", icons: ["/accessible-media-icons/brain-14-svgrepo-com.svg"] },
-  { id: "vision-cognitive", label: "Vision + Cognitive", icons: ["/accessible-media-icons/blind-eyes-svgrepo-com.svg", "/accessible-media-icons/brain-14-svgrepo-com.svg"] },
-  { id: "hearing-cognitive", label: "Hearing + Cognitive", icons: ["/accessible-media-icons/deaf-solid-svgrepo-com.svg", "/accessible-media-icons/brain-14-svgrepo-com.svg"] },
-  { id: "deafblind-cognitive", label: "Deafblind + Cognitive", icons: ["/accessible-media-icons/blind-eyes-svgrepo-com.svg", "/accessible-media-icons/deaf-solid-svgrepo-com.svg", "/accessible-media-icons/brain-14-svgrepo-com.svg"] },
   { id: "sensory", label: "Sensory", icons: ["/accessible-media-icons/sensory.svg"] },
+  { id: "language", label: "Language", icons: ["/accessible-media-icons/language-svgrepo-com.svg"] },
 ] as const;
 
 export type TimelineMode = typeof modes[number]["id"];
