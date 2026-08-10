@@ -3,363 +3,226 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Python_3.12-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Google ADK](https://img.shields.io/badge/Google_ADK-Gemini_3.1_Pro-4285F4?logo=google&logoColor=white)](https://google.github.io/adk-docs/)
 [![Vertex AI](https://img.shields.io/badge/Vertex_AI-Agent_Engine-4285F4?logo=googlecloud&logoColor=white)](https://cloud.google.com/vertex-ai/generative-ai/docs/agent-engine/overview)
-[![ClickHouse](https://img.shields.io/badge/ClickHouse-MCP_%2B_Media_Index-FFCC01?logo=clickhouse&logoColor=000000)](https://clickhouse.com/)
+[![ClickHouse](https://img.shields.io/badge/ClickHouse-Media_Index_%2B_MCP-FFCC01?logo=clickhouse&logoColor=000000)](https://clickhouse.com/)
 [![Cloud Run](https://img.shields.io/badge/Runtime-Google_Cloud_Run-4285F4?logo=googlecloud&logoColor=white)](https://cloud.google.com/run)
 [![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL_16-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 
 # Amplifier
 
-### Accessibility-first agentic media editor
+Amplifier is a media editor for making video, audio, and images accessible. A creator can work on a normal multi-track timeline and produce captions, transcripts, audio descriptions, spoken on-screen text, ASL, Braille, clearer audio, sensory-safe video, larger text, colour-safe visuals, and translated speech in the same project.
 
-Amplifier is a project-based media editor for producing synchronized accessibility alternatives alongside the original video, audio, and images. A user can edit the timeline directly or ask Agent to place media, find exact source moments, create captions and descriptions, generate Braille or ASL tracks, reduce sensory load, clean dialogue, and translate timed speech.
+The editor can be used directly or through an agent. The agent can inspect project files, search inside indexed media, place an entire asset or an exact source moment, change the timeline, and call a specialist for the requested accessibility work. Generated audio, video, captions, ASL, and Braille return to the project rather than remaining as text in a conversation.
 
 Built for the [Agentic Cinema: The Blockbuster Hackathon](https://agentic-cinema.devpost.com/).
 
-[Live application](https://amplifier-frontend-102052243896.africa-south1.run.app) ·
-[Architecture](#architecture) ·
-[Local setup](#local-setup) ·
-[Deployment](#deployment)
+[Open Amplifier](https://amplifier-frontend-102052243896.africa-south1.run.app) · [Local setup](#local-setup) · [Deployment](#deployment)
 
-<table>
-  <tr>
-    <td width="33%" valign="top">
-      <h3>Vision</h3>
-      <p>Creates timed audio descriptions and spoken on-screen text, raises contrast, applies colour-safe rendering, and presents larger text.</p>
-    </td>
-    <td width="33%" valign="top">
-      <h3>Hearing</h3>
-      <p>Creates captions and transcripts, produces synchronized ASL cues, and generates noise-reduced audio or video assets.</p>
-    </td>
-    <td width="33%" valign="top">
-      <h3>Deafblind</h3>
-      <p>Produces Unified English Braille and BRF, structured descriptions, labels, navigation landmarks, and tactile-cue metadata.</p>
-    </td>
-  </tr>
-  <tr>
-    <td width="33%" valign="top">
-      <h3>Sensory</h3>
-      <p>Creates lower-flash, lower-motion, stabilized, lower-stimulation, fewer-cut, and nearly static versions of selected video.</p>
-    </td>
-    <td width="33%" valign="top">
-      <h3>Language</h3>
-      <p>Translates captions, dialogue, and audio descriptions while preserving speaker turns, source timing, and distinct voice presentation.</p>
-    </td>
-    <td width="33%" valign="top">
-      <h3>Agentic timeline</h3>
-      <p>Lets Agent inspect project files and a verified Timeline Shot, perform structural edits, and hand one bounded task at a time to a specialist.</p>
-    </td>
-  </tr>
-</table>
+## How Amplifier works
 
-> ### Current architecture
->
-> - **Product surface:** Next.js 16, React 19, TypeScript, and Auth.js on Cloud Run
-> - **Media API:** FastAPI on Cloud Run with FFmpeg, FFprobe, and Liblouis
-> - **Agent runtime:** Google ADK on Vertex AI Agent Engine with Gemini 3.1 Pro Preview
-> - **Media understanding:** Gemini 3 Flash Preview, Gemini Embedding 2, and Google Cloud Speech-to-Text V2
-> - **Accessible output:** Google Cloud Text-to-Speech, Translation LLM, Chirp 3 HD voices, CWASA SiGML playback, and FFmpeg transforms
-> - **Application state:** PostgreSQL 16 on Cloud SQL; SQLite uses the same query contract locally
-> - **Media storage:** private Google Cloud Storage objects scoped by project and asset
-> - **Media memory:** ClickHouse moment, transcript, silence, speaker, and language-plan records with a scoped MCP surface
->
-> **System invariant:** an agent never invents an asset, clip, timestamp, storage key, or revision. Every mutation is authorized against the active account and project, validated against the canonical timeline, and committed with the expected revision and an idempotency key.
+An Amplifier project contains uploaded media, folders, generated assets, chats, skills, and one canonical timeline.
 
-## Product workflow
+When a file is uploaded, the browser sends its bytes directly to a private Google Cloud Storage bucket through a resumable session. The backend completes the upload, verifies the object size, and uses FFprobe to record duration and whether the file contains audio. The account, project, asset ID, object key, and GCS generation are stored before any editor or agent tool can use the file.
 
-```text
-Create or open a project
-          │
-          ▼
-Upload video, audio, and images directly to GCS
-          │
-          ├── FFprobe verifies duration and audio presence
-          └── project registry records ownership and object generation
-          │
-          ▼
-Index useful media once
-          │
-          ├── Gemini creates timestamped visual and audio moments
-          ├── Speech-to-Text creates timed transcript cues
-          ├── FFmpeg finds silence and renders preview frames
-          └── ClickHouse stores text, vectors, timing, and status
-          │
-          ▼
-Edit manually or ask Agent
-          │
-          ├── capture a verified Timeline Shot
-          ├── place, move, trim, split, replace, or mix media
-          ├── delegate one accessibility task to a specialist
-          └── stream reasoning, tools, timeline changes, and completion
-          │
-          ▼
-Review synchronized alternatives in the viewer
-          │
-          ├── captions / transcript / Braille
-          ├── ASL avatar track
-          ├── descriptions / translated speech / clean audio
-          └── accessible visual or sensory variant
-```
+Moment Search can then index the file. Gemini describes timed visual and audio moments, Speech-to-Text produces timed words, FFmpeg detects silence and creates previews, and Gemini Embedding 2 creates search vectors. ClickHouse stores that work so the editor and accessibility tools can reuse it.
+
+A creator can edit the timeline manually or ask Agent for an outcome. Agent reads the active project and timeline, finds or places the relevant media, selects the correct clip, and performs structural edits itself. If the request needs captions, description, ASL, Braille, a sensory change, or translation, Agent delegates one bounded task to the matching specialist.
+
+Every accepted edit returns a new canonical timeline revision. Captions and ASL remain timed to their source clip. Braille and transcripts can be downloaded. Generated audio and video become owned project assets that can be previewed, compared, placed, replaced, or removed without destroying the original.
 
 ## Architecture
 
+Amplifier separates the browser application, media processing, agent runtime, application state, media storage, and media index.
+
 ```mermaid
 flowchart LR
-    U["User"] --> WEB["Next.js frontend<br/>Cloud Run"]
-    WEB --> AUTH["Auth.js + account context"]
-    WEB --> API["FastAPI media service<br/>Cloud Run"]
-
-    API --> PG["Cloud SQL<br/>accounts, projects, assets,<br/>timelines, skills, idempotency"]
-    API --> GCS["Google Cloud Storage<br/>source and derived media"]
-    API --> CH["ClickHouse<br/>moments, transcripts,<br/>silence, speakers, caches"]
-    API --> FFMPEG["FFmpeg / FFprobe / Liblouis"]
-    API --> GOOGLE["Speech, Translation,<br/>Text-to-Speech, Gemini"]
-
-    WEB --> SSE["SSE chat stream"]
-    SSE --> API
-    API --> AE["Vertex AI Agent Engine"]
-    AE --> ADK["Google ADK"]
-    ADK --> EDIT["Agent"]
-    EDIT --> V["Vision"]
-    EDIT --> H["Hearing"]
-    EDIT --> D["Deafblind"]
-    EDIT --> S["Sensory"]
-    EDIT --> L["Language"]
-
+    Browser["Next.js editor"] --> API["FastAPI media backend"]
+    Browser --> GCS["Google Cloud Storage"]
+    API --> SQL["Cloud SQL PostgreSQL"]
+    API --> GCS
+    API --> CH["ClickHouse"]
+    API --> Media["Gemini, Speech, Translation, TTS, FFmpeg, Liblouis"]
+    API <--> Engine["Vertex AI Agent Engine"]
+    Engine --> ADK["Google ADK agents"]
     ADK --> MCP["Project-scoped ClickHouse MCP"]
-    ADK --> TOOLS["Authenticated typed tool gateway"]
     MCP --> CH
-    TOOLS --> API
 ```
 
-The frontend and backend run as separate Cloud Run services in `africa-south1`. Vertex AI Agent Engine runs the warm ADK application in `europe-west1`; Gemini model calls use the configured global endpoint. Agent Engine receives compact project and timeline context rather than media bytes. Source and generated media remain in GCS beside the media service.
+The Next.js frontend and FastAPI backend run as separate Cloud Run services in `africa-south1`. PostgreSQL on Cloud SQL stores account and editor state. GCS stores original and generated media. ClickHouse stores the timed, searchable information extracted from that media. Vertex AI Agent Engine runs the Google ADK application in `europe-west1` and exchanges compact tool data with the backend; project media is not sent through Agent Engine.
 
-## Agent system
+## ClickHouse
 
-Amplifier deploys one ADK application containing Agent and five task specialists. Agent owns project browsing and structural timeline edits. It delegates only when a request requires one specialist accessibility domain, and it retains responsibility for preparing the timeline selection before that handoff.
+### Why Amplifier needs a media index
 
-| Role | Responsibility | Representative tools |
-|---|---|---|
-| Agent | Project inspection, moment retrieval, asset placement, and timeline structure | `list_project_assets`, `search_media`, `insert_asset_at_playhead`, `move_clip`, `trim_clip`, `split_clip`, `replace_clip`, `set_volume` |
-| Vision | Visual access and visual presentation | `inspect_visual_issue`, `apply_audio_description`, `apply_spoken_text`, `apply_contrast`, `apply_colour_safe`, `apply_large_text` |
-| Hearing | Audio access and dialogue clarity | `read_transcript`, `apply_captions`, `apply_asl`, `apply_noise_reduction` |
-| Deafblind | Access that depends on neither sight nor hearing | `apply_braille_text`, `apply_structured_description`, `apply_labels`, `apply_navigation`, `apply_tactile_cues` |
-| Sensory | Photosensitivity, motion, cuts, shake, and stimulation | `inspect_sensory_issue`, `reduce_flash`, `reduce_motion`, `stabilize`, `reduce_cuts`, `reduce_stimulus`, `create_static_version` |
-| Language | Timed localization of text and speech | `read_speaker_turns`, `translate_captions`, `translate_audio`, `translate_descriptions` |
+A filename does not explain what happens inside a recording. Sending a complete video back through a model whenever a creator needs captions, a scene, a description, or a translation would repeat expensive work and slow down every feature.
 
-Every role can read the verified Timeline Shot, current selection, attached skills, and its own allowlisted tools. Specialists run as ADK task agents with a structured `completed` or `blocked` result. A blocked specialist returns the exact structural action Agent must perform before one bounded retry.
+Amplifier indexes media once and stores the reusable result in ClickHouse. That index answers both search questions and accessibility questions. It can identify the exact seconds containing a visual event, return a timed transcript, supply quiet ranges for narration, provide visual evidence for audio description, and reuse speaker turns and translations.
 
-### Timeline Shot
+ClickHouse is used for four active jobs:
 
-A Timeline Shot is the compact, server-verifiable representation of what the agent needs to edit:
+1. It records the state and result of media indexing.
+2. It stores timed multimodal moments for exact and semantic search.
+3. It supplies transcripts, descriptions, silence, and speakers to agents and accessibility tools.
+4. It caches speaker-aware language plans against the exact source version and selected range.
 
-- project ID and canonical revision;
-- playhead and selected clip IDs;
-- clip IDs, owned asset IDs, names, types, roles, lanes, start times, source trims, and durations;
-- linked audio/video relationships;
-- visual and audio track counts;
-- caption and ASL track state when attached.
+### Data model
 
-The frontend presents the shot as an attachment moving from the timeline into the agent stream. The payload gives the model the same structure the user sees without sending a full-resolution timeline screenshot or the media library on every turn.
+`asset_search_index` stores one current indexing record per project asset. It contains the asset name and type, indexing status and stage, a compact searchable document, silence ranges, a summary embedding, schema and model versions, the last error, and the update time.
 
-### Working behavior
+`asset_search_moments` stores the moments inside each asset. Every row includes a stable moment ID, source start and end, visual description, transcript text, preview key, content type, model versions, and a normalized 768-dimensional Gemini Embedding 2 vector.
 
-Before the first mutation, the active agent states the exact change it is about to make. Timeline mutations run sequentially. Tool calls and results stream into the conversation, the active specialist appears in the header, the timeline switches to its matching mode, and the timeline receives a working-state treatment only while a timeline tool is active.
+`asset_language_tracks` stores reusable speaker turns and translated text. Its key includes the project, source asset and GCS generation, accessibility action, target language, and selected start and end. If the source object or selected range changes, the old language plan is not reused.
 
-Successful mutation results carry the new canonical timeline and changed time/lane range. Expected failures return structured codes, retryability, and a concrete action; they do not crash the ADK stream or become false success messages.
+All three tables use `ReplacingMergeTree(updated_at)`. Reads use `FINAL` when the latest logical record is required. Project and asset identity lead the `ORDER BY` keys so the common editor queries remain scoped to the active project. Repeated categorical fields such as status, content type, language, action, and model use `LowCardinality` columns.
 
-## Canonical timeline
+The moments table also has a materialized `search_text` column built from the asset name, description, and transcript. `tokenbf_v1` indexes cover the searchable document, descriptions, transcripts, and combined search text. Set indexes cover status, content type, language, and action.
 
-Cloud SQL stores one authoritative timeline document per account-owned project.
+### Hybrid moment search
 
-```json
-{
-  "revision": 8,
-  "clips": [
-    {
-      "id": "clip-id",
-      "assetId": "owned-asset-id",
-      "start": 12.5,
-      "duration": 4.0,
-      "lane": 0,
-      "sourceDuration": 18.2,
-      "trimStart": 3.0,
-      "role": "visual",
-      "linkId": "linked-group-id",
-      "volume": 1
-    }
-  ],
-  "trackCounts": { "visual": 2, "audio": 2 },
-  "captionTrack": null,
-  "aslTrack": null
-}
-```
+A query is embedded with Gemini Embedding 2 using the retrieval-query task type. ClickHouse first uses `hasAllTokens` and the token indexes to identify exact lexical candidates. It then calculates `cosineDistance` against the stored moment vectors, gives exact token matches a small score boost, and returns the strongest moments with their asset ID, preview, transcript, description, score, and exact source seconds.
 
-The timeline service enforces:
+The implementation deliberately uses exact vector scoring after lexical candidate reduction rather than claiming a native ANN index. The moment embeddings are normalized before insertion, and document embeddings are generated in batches of up to 100 inputs. Moment rows are inserted together instead of issuing one insert for each moment.
 
-- account and project ownership for every referenced asset;
-- exact base revision comparison;
-- idempotent mutation responses keyed by tool-call ID;
-- unique clip IDs and stable linked groups;
-- non-negative start, trim, lane, and duration values;
-- source bounds and a minimum clip duration;
-- no overlap between clips on the same role and lane;
-- atomic insert, move, trim, split, delete, replace, dub, volume, vision, caption-track, and ASL-track operations.
+Search results are editing inputs. Agent can take the returned asset and source range and insert only those seconds on the timeline. Vision can query overlapping visual moments when producing audio description or spoken on-screen text. ASL can read timed transcript or description cues. Hearing and Deafblind can reuse the transcript for captions, ASL, Braille, and structure.
 
-Manual edits and agent edits both consume canonical server results. A conflict stops the edit and requires a fresh timeline read rather than overwriting newer work.
+### Language cache
 
-## Accessibility pipelines
+Speaker-aware translation has several expensive stages: audio extraction, diarization, speaker turns, translation, voice selection, synthesis, and timing. ClickHouse stores the reusable planning portion in `asset_language_tracks`.
 
-### Vision
+A cache lookup must match the source asset, GCS generation, action, language, and selected time range. A hit returns the same ordered speaker turns and translated turns. A miss runs the language planning pass and saves its result for later caption, dialogue, or description translation.
 
-Indexed visual moments provide the timestamps and scene evidence for audio description and spoken on-screen text. Gemini 3 Flash Preview creates bounded narration cues, Chirp 3 HD synthesizes each cue, and FFmpeg places the speech at the selected source times. Contrast and colour-safe variants use deterministic FFmpeg filters and become new GCS assets linked to their source.
+### Agent access through MCP
 
-### Hearing
-
-Google Cloud Speech-to-Text V2 produces timed transcript cues. Captions remain attached to the selected canonical clip. ASL generation converts each transcript or description cue into one timing-preserving ASL gloss and validated CWASA-compatible gestural SiGML document. The viewer renders that track through a movable, keyboard-operable CWASA avatar. Noise reduction uses FFmpeg `afftdn`, preserves video when present, and registers the generated result as a new project asset.
-
-### Deafblind
-
-Liblouis translates the selected transcript through the `en-ueb-g2.ctb` table. Amplifier stores Unicode Braille, BRF text, and BRF timestamps on the timeline and can download the full track as `.brf`. Additional Deafblind operations attach structured descriptions, scene and speaker labels, navigation landmarks, large-print state, and deterministic tactile cues without replacing the original media.
-
-### Sensory
-
-Gemini Omni Flash edits selected video in bounded 9.5-second chunks for lower flash, lower motion, stabilization, fewer cuts, lower stimulation, or a nearly static alternative. FFmpeg normalizes each generated chunk back to its source duration, stitches the result, and restores the original selected audio. The derived video retains its source asset relationship and GCS generation.
-
-### Language
-
-Amplifier supports English, Spanish, French, German, Portuguese, Italian, Arabic, Hindi, Japanese, Korean, and Chinese targets. Chirp 3 diarizes source speech with word timestamps. Gemini profiles audible voice presentation for synthetic casting, Google Translation LLM translates one result per speaker turn, and Chirp 3 HD voices synthesize distinct speakers. FFmpeg fits each result to its original time window before the new audio track is added and the source dialogue is muted.
-
-The same path translates captions or creates translated audio descriptions from indexed visual moments. Translation plans are cached in ClickHouse by project, source asset generation, action, language, and selected range.
-
-## ClickHouse media memory
-
-ClickHouse is the queryable media evidence layer, not the ownership or timeline authority.
-
-### Tables
-
-| Table | Engine and key | Purpose |
-|---|---|---|
-| `asset_search_index` | `ReplacingMergeTree(updated_at)` ordered by project and asset | Index status, searchable document, silence ranges, summary embedding, model and schema versions |
-| `asset_search_moments` | `ReplacingMergeTree(updated_at)` ordered by project, asset, and moment | Timestamped descriptions, transcript text, thumbnails, 768-dimensional embeddings, and materialized search text |
-| `asset_language_tracks` | `ReplacingMergeTree(updated_at)` ordered by source generation, action, language, and range | Reusable diarized turns and translated text plans |
-
-`tokenbf_v1` indexes narrow exact text candidates before vector ranking. Gemini Embedding 2 stores 768-dimensional document and moment vectors. Search combines token evidence with cosine distance, then returns owned asset IDs and exact time ranges that Agent can place on the timeline.
-
-### Scoped MCP
-
-The ADK application connects to Amplifier's Streamable HTTP MCP server through `McpToolset`. It exposes four read-only tools:
+The active Google ADK agents receive a custom Streamable HTTP MCP toolset backed by ClickHouse. It exposes four read-only operations:
 
 - `clickhouse_search_project_moments`
 - `clickhouse_read_project_transcript`
 - `clickhouse_read_project_silence_ranges`
 - `clickhouse_read_project_speaker_turns`
 
-The tool context injects account, project, and internal MCP authentication headers. Every request rechecks account ownership and asset membership before querying ClickHouse. Raw SQL and cross-project identifiers are not exposed to agents.
+This is not raw database access. ADK injects the active account, project, and internal MCP secret into each request. The MCP server verifies project ownership and asset membership in the application database before querying ClickHouse. The model cannot choose another account scope or submit arbitrary SQL.
 
-## Media ingestion and indexing
+The FastAPI service uses the asynchronous `clickhouse-connect` client over TLS for runtime commands, inserts, and parameterized queries. The project also contains a generic `mcp-clickhouse` CLI toolset for database discovery and read-only query development, but the production agents use the narrower HTTP MCP surface described above.
 
-Browser uploads use GCS resumable sessions in 8 MiB chunks. Bytes do not pass through Next.js or FastAPI. The completion request verifies the expected object size and uses FFprobe to make audio presence authoritative before the asset enters the project registry.
+Index status also lives in ClickHouse. Reloading the editor reads `indexing`, `ready`, or `failed`, along with the current stage, error, and update time. If a process ended while an asset was marked as indexing and no active in-process lock remains, the backend reports it as interrupted so the user can explicitly retry. Amplifier does not poll; status arrives through the indexing request, reload, or manual refresh.
 
-Moment Search is explicit. Activating it starts indexing for eligible project files and streams status through the originating request path. The indexer:
+## Agent system
 
-1. reads the owned GCS object;
-2. extracts deterministic duration, frames, audio, and silence evidence;
-3. creates timestamped visual or audio moments with Gemini 3 Flash Preview;
-4. transcribes speech with Chirp 3 when audio is present;
-5. renders durable preview frames into a versioned GCS prefix;
-6. embeds compact documents and moments with Gemini Embedding 2;
-7. writes versioned rows to ClickHouse.
+Amplifier runs one Google ADK application using `gemini-3.1-pro-preview`. Agent owns project inspection, media retrieval, and structural timeline editing. Five task agents handle accessibility domains:
 
-Reload reads the durable ClickHouse state. A manual refresh performs one explicit status read; the application does not poll.
+- Vision creates audio description, spoken on-screen text, larger text, contrast changes, and colour-safe media.
+- Hearing creates transcripts, captions, ASL, and noise-reduced media.
+- Deafblind creates Braille, BRF, structured descriptions, labels, navigation, large-print state, and tactile cues.
+- Sensory creates reduced-flash, reduced-motion, stabilized, fewer-cut, lower-stimulation, and nearly static video.
+- Language translates captions, spoken dialogue, and audio descriptions while preserving speaker turns and timing.
 
-## Storage and ownership
+Each agent receives a role-specific tool allowlist. Agent can browse owned files, inspect assets, query ClickHouse, insert exact moments, select clips, and move, trim, split, delete, replace, or mix media. Specialists receive shared read tools, the scoped ClickHouse MCP, and only the mutation tools belonging to their accessibility domain.
 
-```text
-gs://amplifier-20260806-assets/
-└── projects/{project id}/
-    ├── assets/{asset id}/{file}
-    ├── search/moments/v3/{asset id}/{preview}.jpg
-    └── accessibility/
-        ├── asl/v3/r2/{asset id}/{digest}.json
-        └── speakers/
-            ├── audio/v1/{asset}-{generation}.flac
-            ├── voices/v1/{asset}-{generation}.json
-            └── v4/{asset}-{generation}.json
-```
+Agent prepares the timeline before delegation. It places missing media, selects the canonical clip, and sends one bounded task to one specialist. A specialist returns either `completed` with the resulting revision or `blocked` with a concrete prerequisite. It cannot delegate again.
 
-Cloud SQL normalizes accounts, projects, assets, timelines, skills, and idempotency records. Authorization never trusts a client-authored project UUID or object key by itself. Media tools resolve the active account and project from authenticated server context, then resolve asset IDs through the project registry.
+Before a timeline mutation, an agent reads a Timeline Shot. This is a compact JSON representation of the project ID, timeline revision, playhead, selection, clips, asset IDs, roles, lanes, start times, source trims, durations, linked audio and video, track counts, captions, and ASL state. It gives the model the current edit without sending the complete project or full-resolution media on every turn.
 
-GCS objects are private. Uploads use origin-bound resumable sessions and `ifGenerationMatch=0`; derived objects record their source asset and operation in object metadata. The frontend reads owned media through an authenticated backend route.
+Tool calls return structured success or failure results. Expected failures include an error code, message, retryability, field details, current revision, and any action the agent can take. Successful mutations return the complete new timeline and the changed time and lane range.
 
-## Streaming and chat state
+## Timeline and application state
 
-The browser sends one authenticated project, session, selection, playhead, Timeline Shot, and attached-skill manifest with each agent turn. The backend streams:
+PostgreSQL is the authority for users, projects, assets, timelines, skills, chat metadata, and idempotency records. SQLite implements the same application contract for local development when no PostgreSQL connection is configured.
 
-- reasoning summaries;
-- agent and specialist activation;
-- tool calls and structured tool responses;
-- Timeline Shot attachments;
-- changed timeline ranges;
-- generated chat titles;
-- errors and completion.
+Each project has one timeline document containing its revision, clips, visual and audio track counts, caption track, and ASL track. A clip records its owned asset ID, role, lane, start, duration, source duration, trim start, volume, optional linked-group ID, and visual adjustments.
 
-Direct agents stream text tokens. Agent Engine tool workflows stream each ADK event through an incremental JSON adapter that handles fragmented adjacent events without waiting for the full run. Agent Engine Sessions stores managed ADK session state. Cloud SQL stores application and timeline state; one is never used as a substitute for the other.
+Every mutation includes the timeline revision it started from and an idempotency key derived from the tool call. The backend locks the project, verifies the revision, checks every referenced asset against the account-owned registry, applies the operation, validates the complete result, and commits one new revision. A repeated tool call returns its recorded response. A stale revision returns a conflict instead of overwriting newer work.
 
-Chats can be branched and deleted. After the first successful user/agent turn, Gemini 3 Flash Preview names the chat once and the title is stored in the ADK session. Skills are server-stored Markdown instructions attached per chat. They can narrow an agent's allowed tools but cannot grant authority outside the role's hard tool allowlist.
+The validator rejects unknown assets, duplicate clip IDs, negative times, invalid lanes, source overruns, clips below the minimum duration, and overlapping clips on the same role and lane. Linked audio and video are moved, trimmed, split, replaced, and deleted together unless the requested operation explicitly targets one track.
+
+Manual edits and agent edits use the same timeline service and receive the same canonical response. This keeps the browser, renderer, and agents on one document instead of maintaining separate editor states.
+
+## Accessibility pipelines
+
+### Vision
+
+Audio description and spoken on-screen text start from the visual moments already stored in ClickHouse. Gemini 3 Flash Preview turns that evidence into bounded narration cues. Chirp 3 HD synthesizes the cue text, and FFmpeg places each cue at its source time. Contrast and colour-safe operations use deterministic FFmpeg filters and register the result as a new GCS asset linked to the source.
+
+### Hearing and ASL
+
+Speech-to-Text V2 with `chirp_3` creates timed words and transcript cues. Captions remain attached to the selected canonical clip. Noise reduction uses FFmpeg `afftdn`, preserves video when present, and creates a new owned asset.
+
+ASL uses transcript or description cues without changing their IDs or timestamps. Gemini 3.1 Pro Preview produces an ASL gloss and CWASA-compatible gestural SiGML for every cue. The backend validates the XML structure, supported elements, cue identity, and timing before saving the track. The viewer plays the result through a movable, keyboard-operable CWASA avatar.
+
+### Deafblind
+
+Liblouis translates timed text through the `en-ueb-g2.ctb` table. Amplifier stores Unicode Braille, BRF text, and BRF timestamps, and the viewer can download the complete `.brf` file. Other Deafblind operations attach structured descriptions, visual and sound descriptions, scene and speaker labels, navigation points, large-print state, and tactile cue information.
+
+### Sensory
+
+Gemini Omni Flash edits selected video in 9.5-second sections for less flashing, movement, camera shake, rapid cutting, or stimulation. FFmpeg normalizes every generated section to the source duration, joins the result, and restores the selected source audio. A nearly static option creates a calmer version while retaining the original timing.
+
+### Language
+
+Amplifier currently supports English, Spanish, French, German, Portuguese, Italian, Arabic, Hindi, Japanese, Korean, and Chinese targets.
+
+The backend converts selected audio to mono 16 kHz FLAC before sending it to Speech-to-Text. Chirp 3 returns word timestamps and speaker labels. Gemini profiles audible voice presentation for synthetic casting, Google Translation LLM translates one result per speaker turn, and Chirp 3 HD gives different speakers stable voices. FFmpeg adjusts speaking rate and fits each synthesized turn into its original window before the new audio is added to the timeline.
+
+The same language path can translate captions or create translated audio descriptions from indexed visual moments. ClickHouse prevents repeated diarization and translation planning when the source generation, range, action, and language have not changed.
+
+## Uploads, storage, and ownership
+
+Browser uploads use GCS resumable sessions in 8 MiB chunks, so media bytes do not pass through Next.js or FastAPI. Sessions are bound to the browser origin and create new objects with `ifGenerationMatch=0`. Completion verifies object size and FFprobe metadata before the application registers the asset.
+
+Source media lives under `projects/{project_id}/assets/{asset_id}/`. Search previews use versioned moment paths. ASL plans, speaker audio, voice profiles, language artifacts, sensory edits, descriptions, and other generated files use project- and source-specific keys.
+
+GCS object paths do not establish authorization. The authenticated account and active project come from the server session. Media routes and tools resolve an asset ID through the application database and confirm its account and project before reading its object key. Derived objects record their source asset, action, and generation in metadata where applicable.
+
+## Streaming, chats, and skills
+
+Agent runs stream through FastAPI and Next.js as server-sent events. The event stream includes text, reasoning summaries, tool calls, tool results, active specialist changes, Timeline Shot attachments, changed timeline ranges, errors, and completion. An incremental Agent Engine adapter handles fragmented adjacent JSON events without waiting for the full run to finish.
+
+Agent Engine Sessions stores ADK conversation events and state. PostgreSQL stores application-owned chat metadata. After the first successful user and agent turn, Gemini 3 Flash Preview creates one chat title. Chats can be branched and deleted.
+
+Skills are Markdown instructions stored per account and attached per chat. A skill can narrow the tools available for a task and add workflow guidance, but it cannot grant a tool outside the selected agent's hard allowlist or change account and project authority.
 
 ## Models and services
 
-| Capability | Model or service | Output |
-|---|---|---|
-| Agent and specialists | `gemini-3.1-pro-preview` through Google ADK | Reasoning, tool calls, delegation, structured specialist results |
-| Chat title | `gemini-3-flash-preview` | One persisted title after the first completed turn |
-| Media understanding | `gemini-3-flash-preview` | Timestamped visual and audio moments |
-| Embeddings | `gemini-embedding-2`, 768 dimensions | ClickHouse summary and moment vectors |
-| Transcription and diarization | Google Cloud Speech-to-Text V2 `chirp_3` | Timed words, transcript cues, and speaker turns |
-| Translation | Google Cloud Translation `general/translation-llm` | One translation per timed source turn |
-| Speech synthesis | Google Cloud Text-to-Speech Chirp 3 HD | Descriptions and multi-speaker translated audio |
-| ASL planning | `gemini-3.1-pro-preview` | Timing-preserving ASL gloss and validated gestural SiGML |
-| Sensory video | `gemini-omni-flash-preview` | Edited video chunks normalized to source timing |
-| Braille | Liblouis `en-ueb-g2.ctb` | Unicode Braille and BRF |
-| Media processing | FFmpeg and FFprobe | Preview frames, filters, audio fitting, probing, and MP4 render |
+| Capability | Model or service |
+|---|---|
+| Agent and specialists | Google ADK with `gemini-3.1-pro-preview` |
+| Chat titles and media understanding | `gemini-3-flash-preview` |
+| Media vectors | `gemini-embedding-2`, 768 dimensions |
+| Transcription and diarization | Speech-to-Text V2 `chirp_3` |
+| Translation | Google Cloud Translation `general/translation-llm` |
+| Speech synthesis | Google Cloud Text-to-Speech Chirp 3 HD |
+| ASL planning | `gemini-3.1-pro-preview` and validated gestural SiGML |
+| Sensory video | `gemini-omni-flash-preview` |
+| Braille | Liblouis `en-ueb-g2.ctb` |
+| Media processing | FFmpeg and FFprobe |
+| Media index and agent evidence | ClickHouse and project-scoped MCP |
+| Application state | PostgreSQL 16 on Cloud SQL |
+| Media storage | Google Cloud Storage |
 
-## Export boundary
+## Export behavior
 
-The current MP4 renderer composes visual and audio clips, trim ranges, lane timing, volume, contrast, and colour-safe settings into H.264/AAC output. Captions, transcripts, Braille, and ASL remain selectable synchronized timeline alternatives in the application. Captions and transcripts download as SRT, Braille downloads as BRF, and ASL plays through the viewer avatar; they are not currently burned into the MP4 export.
+The MP4 renderer currently composes visual and audio clips, source trims, lane timing, volume, contrast, and colour-safe settings into H.264/AAC output. Captions, transcripts, Braille, and ASL remain selectable synchronized alternatives in the application. Captions and transcripts can download as SRT, Braille as BRF, and ASL plays through the viewer avatar; these tracks are not currently burned into the MP4.
 
 ## Repository structure
 
 ```text
 amplifier/
-├── app/
-│   ├── api/                 # Authenticated Next.js API boundary
-│   ├── components/          # Editor, timeline, viewers, chat, skills, modes
-│   ├── hooks/               # Canonical timeline and media-search state
-│   └── lib/                 # Uploads, streaming, sessions, timeline documents
+├── app/                    # Next.js routes, editor, timeline, viewers, chat, and skills
 ├── backend/
 │   ├── app/
-│   │   ├── agents/          # ADK roles, delegation, and tool policy
-│   │   ├── tools/           # ClickHouse MCP servers
-│   │   ├── agent_tools.py   # Typed project, timeline, and accessibility tools
+│   │   ├── agents/         # ADK roles, delegation, and tool policy
+│   │   ├── tools/          # Scoped and generic ClickHouse MCP integrations
+│   │   ├── agent_tools.py  # Project, timeline, and accessibility tool contracts
+│   │   ├── media_search.py # ClickHouse indexing and hybrid moment search
 │   │   ├── timeline_service.py
-│   │   ├── media_indexing.py
-│   │   ├── media_search.py
-│   │   ├── language_tools.py
 │   │   ├── vision_tools.py
 │   │   ├── hearing_tools.py
+│   │   ├── language_tools.py
 │   │   ├── sensory_tools.py
 │   │   ├── asl_tools.py
 │   │   └── braille.py
-│   ├── tests/               # Agent, timeline, indexing, ASL, language, Braille
+│   ├── tests/
 │   └── requirements.txt
-├── infra/
-│   ├── Dockerfile.frontend
-│   ├── Dockerfile.backend
-│   ├── cloudbuild.frontend.yaml
-│   ├── cloudbuild.backend.yaml
-│   ├── deploy_agent_engine.py
-│   └── gcs-cors.json
-├── public/                  # Product and accessibility icons
+├── infra/                  # Cloud Build, Cloud Run containers, Agent Engine deployment
+├── public/
 └── package.json
 ```
 
@@ -373,8 +236,9 @@ amplifier/
 - FFmpeg and FFprobe
 - Liblouis with `lou_translate`
 - Google Cloud Application Default Credentials
-- a GCS bucket and Google Cloud project with Vertex AI, Speech-to-Text, Text-to-Speech, and Translation enabled
-- ClickHouse for Moment Search, transcript evidence, and language-plan caching
+- a GCS bucket
+- ClickHouse
+- Google Cloud APIs for Vertex AI, Speech-to-Text, Text-to-Speech, and Translation
 
 On macOS:
 
@@ -400,6 +264,7 @@ Create `.env.local`:
 
 ```dotenv
 AUTH_SECRET=replace-with-a-long-random-value
+AUTH_URL=http://localhost:3000
 AMPLIFIER_BACKEND_URL=http://127.0.0.1:8000
 AMPLIFIER_INTERNAL_SECRET=replace-with-the-same-backend-secret
 ```
@@ -415,7 +280,7 @@ GOOGLE_SPEECH_LOCATION=us
 AMPLIFIER_GCS_BUCKET=your-private-gcs-bucket
 AMPLIFIER_INTERNAL_SECRET=replace-with-the-same-frontend-secret
 
-CLICKHOUSE_HOST=https://your-clickhouse-host
+CLICKHOUSE_HOST=your-clickhouse-host
 CLICKHOUSE_USER=default
 CLICKHOUSE_PASSWORD=replace-with-clickhouse-password
 CLICKHOUSE_DATABASE=amplifier
@@ -424,11 +289,10 @@ AMPLIFIER_AGENT_MODEL=gemini-3.1-pro-preview
 AMPLIFIER_AGENT_MODEL_LOCATION=global
 AMPLIFIER_BACKEND_ORIGIN=http://127.0.0.1:8000
 
-# Required by Gemini Omni sensory video editing.
 GEMINI_API_KEY=replace-with-gemini-api-key
 ```
 
-SQLite is used when neither `AMPLIFIER_DATABASE_URL` nor `AMPLIFIER_DATABASE_SOCKET` is set. Production can use a PostgreSQL URL or Cloud SQL Unix socket through:
+SQLite is used when neither `AMPLIFIER_DATABASE_URL` nor `AMPLIFIER_DATABASE_SOCKET` is configured. PostgreSQL can use a normal connection URL or a Cloud SQL Unix socket:
 
 ```dotenv
 AMPLIFIER_DATABASE_URL=postgresql://user:password@host/database
@@ -449,17 +313,18 @@ source .venv/bin/activate
 uvicorn app.main:app --reload
 ```
 
-Start the frontend in a second terminal:
+Start the frontend in another terminal:
 
 ```bash
 pnpm dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The backend health route is [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health).
+Open [http://localhost:3000](http://localhost:3000). The backend health route is [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health), and ClickHouse health is [http://127.0.0.1:8000/clickhouse/health](http://127.0.0.1:8000/clickhouse/health).
 
 ## Testing
 
 ```bash
+pnpm lint
 pnpm build
 
 cd backend
@@ -467,31 +332,30 @@ source .venv/bin/activate
 python -m unittest discover -s tests
 ```
 
-The backend suite covers agent construction and tool policy, canonical timeline behavior, managed Agent Engine streaming, media indexing, search efficiency, language timing, ASL validation, Braille output, and FFmpeg timeline rendering.
+The backend suite covers agent construction and tool policy, timeline revisions and validation, Agent Engine streaming, indexing, hybrid search efficiency, language timing, ASL validation, Braille, production runtime configuration, and FFmpeg rendering.
 
 ## Deployment
 
 Production uses three independently scaled runtimes in Google Cloud project `amplifier-20260806`:
 
-| Runtime | Region | Responsibility |
-|---|---|---|
-| `amplifier-frontend` | `africa-south1` | Next.js application, authentication, and browser API boundary |
-| `amplifier-backend` | `africa-south1` | FastAPI, GCS, ClickHouse, Cloud SQL, FFmpeg, Speech, Translation, and tool gateway |
-| `Amplifier Agent` | `europe-west1` | Warm Vertex AI Agent Engine application containing all ADK roles |
+- `amplifier-frontend` runs Next.js, Auth.js, and the browser API boundary in `africa-south1`.
+- `amplifier-backend` runs FastAPI, FFmpeg, FFprobe, Liblouis, media integrations, ClickHouse access, Cloud SQL access, and the agent tool gateway in `africa-south1`.
+- `Amplifier Agent` runs the Google ADK application on Vertex AI Agent Engine in `europe-west1`.
 
-The backend container installs and verifies FFmpeg, FFprobe, and Liblouis during the image build. Cloud Run connects to PostgreSQL 16 through the Cloud SQL connector. Secrets are mounted from Secret Manager rather than stored in source or container images. The frontend and backend maintain warm minimum instances, startup CPU boost, and bounded concurrency appropriate to their workloads.
+The frontend and backend images are built with `infra/cloudbuild.frontend.yaml` and `infra/cloudbuild.backend.yaml`. The backend container verifies FFmpeg, FFprobe, and Liblouis during its image build. Agent Engine deployment is defined in `infra/deploy_agent_engine.py`.
 
-Build definitions live in `infra/cloudbuild.frontend.yaml` and `infra/cloudbuild.backend.yaml`. Agent Engine deployment is defined in `infra/deploy_agent_engine.py`. See [`infra/README.md`](infra/README.md) for the production runtime contract.
+Cloud Run uses service-specific identities. Secrets are mounted from Secret Manager. The backend connects to PostgreSQL through the Cloud SQL connector. The frontend sets a canonical `AUTH_URL` so Auth.js never uses the container's internal bind address for browser redirects. See [`infra/README.md`](infra/README.md) for the production runtime contract.
 
 ## Security and reliability
 
-- Account IDs and project IDs are injected by authenticated server routes.
-- Project and asset ownership are normalized in the application database.
-- Raw GCS object keys never establish authorization.
-- Upload sessions are origin-bound, resumable, and generation-protected.
+- Accounts, projects, and assets are normalized in the application database.
+- Authenticated server routes inject account and project context.
+- GCS object keys never establish authorization by themselves.
+- Upload sessions are resumable, origin-bound, and generation-protected.
+- Timeline mutations use project locks, expected revisions, validation, and idempotency records.
 - Agent tools use role allowlists and server-resolved project context.
-- ClickHouse MCP tools are read-only and project-scoped.
-- Timeline changes use validation, expected revisions, project locks, and idempotency records.
-- GCS generations identify exact source versions used by caches and derived assets.
-- Expected tool failures return structured results and remain visible in the stream.
-- Status reconciliation uses request streams or explicit refresh; the application does not poll.
+- ClickHouse MCP tools are read-only, authenticated, and project-scoped.
+- ClickHouse queries use typed parameters rather than model-generated SQL.
+- GCS generations identify the exact source used by caches and generated assets.
+- Tool failures remain visible as structured results.
+- Long agent work streams through SSE; status refresh is request-driven or manual rather than polling.
