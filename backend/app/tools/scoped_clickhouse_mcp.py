@@ -3,10 +3,12 @@ from __future__ import annotations
 import hmac
 import json
 from typing import Any
+from urllib.parse import urlparse
 
 from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
 from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from app.accounts import account_owns_project, project_asset
 from app.clickhouse import clickhouse_client
@@ -15,7 +17,18 @@ from app.language_tools import _speaker_turns
 from app.media_search import SEARCH_SCHEMA_VERSION, asset_transcript, search_assets
 
 
-scoped_clickhouse_server = FastMCP("Amplifier ClickHouse", stateless_http=True, json_response=True, streamable_http_path="/")
+backend_origin = environment("AMPLIFIER_BACKEND_ORIGIN", "http://127.0.0.1:8000").rstrip("/")
+backend_host = urlparse(backend_origin).netloc
+scoped_clickhouse_server = FastMCP(
+    "Amplifier ClickHouse",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=TransportSecuritySettings(
+        allowed_hosts=[backend_host],
+        allowed_origins=[backend_origin],
+    ),
+)
 
 
 async def _scope(context: Context) -> tuple[str, str]:
@@ -84,7 +97,7 @@ async def scoped_headers(context: Any) -> dict[str, str]:
 
 SCOPED_MCP_TOOL_NAMES = {"search_project_moments", "read_project_transcript", "read_project_silence_ranges", "read_project_speaker_turns"}
 scoped_clickhouse_mcp = McpToolset(
-    connection_params=StreamableHTTPConnectionParams(url=f"{environment('AMPLIFIER_BACKEND_ORIGIN', 'http://127.0.0.1:8000').rstrip('/')}/mcp/", timeout=10, sse_read_timeout=300),
+    connection_params=StreamableHTTPConnectionParams(url=f"{backend_origin}/mcp/", timeout=10, sse_read_timeout=300),
     tool_filter=sorted(SCOPED_MCP_TOOL_NAMES),
     tool_name_prefix="clickhouse",
     header_provider=scoped_headers,

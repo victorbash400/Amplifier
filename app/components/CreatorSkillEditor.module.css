@@ -1,0 +1,13 @@
+.editor { display: grid; min-height: min(570px, calc(100vh - 48px)); grid-template-rows: auto auto minmax(0, 1fr); }
+.editor header { display: grid; padding: 18px 20px 10px; align-items: center; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 10px; }
+.editor header span { display: grid; min-width: 0; gap: 2px; }
+.editor h2 { margin: 0; overflow: hidden; color: #555552; font-size: 17px; font-weight: 530; text-overflow: ellipsis; white-space: nowrap; }
+.editor small, .editor > p { color: #888883; font-size: 11px; }
+.editor button { height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: #676762; cursor: pointer; }
+.editor header > button:first-child { display: grid; width: 32px; padding: 0; place-items: center; }
+.editor header > button:last-child { background: #222; color: #fff; }
+.editor button:disabled { cursor: default; opacity: .35; }
+.editor > p { min-height: 20px; margin: 0; padding: 0 22px 8px 64px; }
+.editor > p[data-error="true"] { color: #a34848; }
+.editor textarea { width: calc(100% - 28px); min-height: 430px; margin: 0 14px 14px; padding: 17px; resize: none; border: 1px solid #e3e3df; border-radius: 13px; background: #f7f7f4; color: #30302e; outline: 0; font: 12.5px/1.58 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.editor textarea:focus { border-color: #cdcdc7; background: #fff; box-shadow: 0 0 0 3px rgb(0 0 0 / 3.5%); }

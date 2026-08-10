@@ -18,13 +18,21 @@ from app.vision_tools import generate_vision_filter, generate_vision_narration
 
 
 MUTATION_TOOLS = {
-    "insert_asset", "insert_asset_at_playhead", "insert_asset_next_to", "insert_media_moment", "move_clip", "trim_clip", "split_clip", "delete_clip", "replace_clip", "set_volume",
+    "insert_asset", "insert_asset_at_playhead", "insert_asset_next_to", "insert_media_moment", "move_clip", "trim_clip", "split_clip", "delete_clip", "replace_clip", "replace_clip_track", "set_volume",
     "apply_audio_description", "apply_spoken_text", "apply_contrast", "apply_colour_safe", "apply_large_text",
     "apply_captions", "apply_asl", "apply_noise_reduction", "apply_braille_text", "apply_structured_description",
     "apply_labels", "apply_navigation", "apply_tactile_cues", "reduce_flash", "reduce_motion", "stabilize",
     "reduce_cuts", "reduce_stimulus", "create_static_version", "translate_captions", "translate_audio",
     "translate_descriptions",
 }
+
+
+class AgentToolError(ValueError):
+    def __init__(self, code: str, message: str, action: str, *, retryable: bool = False):
+        super().__init__(message)
+        self.code = code
+        self.action = action
+        self.retryable = retryable
 
 
 def _state(tool_context: ToolContext) -> tuple[str, str, int]:
@@ -46,7 +54,12 @@ async def _selected(tool_context: ToolContext, role: str | None = None) -> tuple
     selected_ids = [str(value) for value in tool_context.state.get("selected_clip_ids", [])]
     clip = next((item for item in timeline["clips"] if item["id"] in selected_ids and (role is None or item["role"] == role)), None)
     if not clip:
-        raise ValueError("Select a compatible timeline clip before using this tool")
+        raise AgentToolError(
+            "selection_required",
+            "A compatible timeline clip is not selected.",
+            "Read the timeline shot, call select_timeline_clip with the exact clip ID, then retry once.",
+            retryable=True,
+        )
     return timeline, clip
 
 
@@ -81,7 +94,23 @@ async def read_timeline_shot(tool_context: ToolContext) -> dict[str, Any]:
     timeline = await _timeline(tool_context)
     selected = set(str(value) for value in tool_context.state.get("selected_clip_ids", []))
     clips = timeline["clips"] if not selected else [clip for clip in timeline["clips"] if clip["id"] in selected or clip.get("linkId") and any(other["id"] in selected and other.get("linkId") == clip.get("linkId") for other in timeline["clips"])]
-    return {"status": "completed", "shot": {"projectId": tool_context.state["project_id"], "revision": timeline["revision"], "playhead": tool_context.state.get("playhead", 0), "selectedClipIds": list(selected), "clips": clips, "trackCounts": timeline["trackCounts"]}}
+    account_id, project_id, _ = _state(tool_context)
+    assets = {asset["id"]: asset for asset in await project_assets(account_id, project_id)}
+    projected = [{**clip, "assetName": assets.get(clip["assetId"], {}).get("name", "Unavailable media"), "assetType": assets.get(clip["assetId"], {}).get("type", "")} for clip in clips]
+    return {"status": "completed", "shot": {"projectId": project_id, "revision": timeline["revision"], "playhead": tool_context.state.get("playhead", 0), "selectedClipIds": list(selected), "clips": projected, "trackCounts": timeline["trackCounts"]}}
+
+
+async def read_attached_skill(skill_id: str, tool_context: ToolContext) -> dict[str, Any]:
+    """Read one server-verified skill attached to this chat.
+
+    Args:
+        skill_id: Exact skill ID from the attached-skill manifest.
+    """
+    skills = tool_context.state.get("attached_skills", [])
+    skill = next((item for item in skills if isinstance(item, dict) and item.get("id") == skill_id), None)
+    if not skill:
+        raise ValueError(f"Skill is not attached: {skill_id}")
+    return {"status": "completed", "skill_id": skill_id, "revision": skill.get("revision"), "name": skill.get("name"), "instructions": skill.get("instruction")}
 
 
 async def read_timeline(tool_context: ToolContext) -> dict[str, Any]:
@@ -97,6 +126,19 @@ async def read_selection(tool_context: ToolContext) -> dict[str, Any]:
     clips = [clip for clip in timeline["clips"] if clip["id"] in selected]
     assets = {clip["assetId"]: await project_asset(account_id, project_id, clip["assetId"]) for clip in clips}
     return {"status": "completed", "clips": clips, "assets": assets}
+
+
+async def select_timeline_clip(clip_id: str, tool_context: ToolContext) -> dict[str, Any]:
+    """Focus an exact canonical clip and its linked group for subsequent tools."""
+    timeline = await _timeline(tool_context)
+    clip = next((item for item in timeline["clips"] if item["id"] == clip_id), None)
+    if not clip:
+        raise AgentToolError("clip_not_found", "The requested timeline clip was not found.", "Read the current timeline shot and use one exact returned clip ID.")
+    selected = [item["id"] for item in timeline["clips"] if item["id"] == clip_id or clip.get("linkId") and item.get("linkId") == clip.get("linkId")]
+    playhead = float(clip["start"])
+    tool_context.state["selected_clip_ids"] = selected
+    tool_context.state["playhead"] = playhead
+    return {"status": "completed", "selection": {"clipIds": selected, "playhead": playhead}, "clip": clip}
 
 
 async def read_project(tool_context: ToolContext) -> dict[str, Any]:
@@ -265,12 +307,21 @@ async def delete_clip(clip_id: str, ripple: bool, tool_context: ToolContext) -> 
 
 
 async def replace_clip(clip_id: str, asset_id: str, tool_context: ToolContext) -> dict[str, Any]:
-    """Replace a timeline clip with another owned asset while preserving placement."""
+    """Replace a clip and every linked audio/video track with one owned asset."""
     account_id, project_id, _ = _state(tool_context)
     asset = await project_asset(account_id, project_id, asset_id)
     if not asset:
         raise ValueError("Replacement asset was not found in this project")
     return await _mutate(tool_context, {"kind": "replace", "clip_id": clip_id, "asset_id": asset_id, "source_duration": float(asset.get("duration") or .25)})
+
+
+async def replace_clip_track(clip_id: str, asset_id: str, tool_context: ToolContext) -> dict[str, Any]:
+    """Replace only one exact audio or visual clip without changing linked tracks."""
+    account_id, project_id, _ = _state(tool_context)
+    asset = await project_asset(account_id, project_id, asset_id)
+    if not asset:
+        raise ValueError("Replacement asset was not found in this project")
+    return await _mutate(tool_context, {"kind": "replace_track", "clip_id": clip_id, "asset_id": asset_id, "source_duration": float(asset.get("duration") or .25)})
 
 
 async def set_volume(clip_id: str, volume: float, tool_context: ToolContext) -> dict[str, Any]:
@@ -318,6 +369,7 @@ async def _narration(action: str, tool_context: ToolContext) -> dict[str, Any]:
     lane = max((item["lane"] for item in timeline["clips"] if item["role"] == "audio"), default=-1) + 1
     inserted = {"id": str(uuid4()), "assetId": generated_id, "start": clip["start"], "duration": min(clip["duration"], float(generated.get("duration") or clip["duration"])), "lane": lane, "sourceDuration": float(generated.get("duration") or clip["duration"]), "trimStart": 0, "role": "audio", "volume": 1}
     result = await _mutate(tool_context, {"kind": "insert", "clip": inserted})
+    result["selection"] = {"clipIds": [inserted["id"]], "playhead": inserted["start"]}
     result["asset"] = generated
     return result
 
@@ -470,7 +522,9 @@ async def _translate(action: str, language: str, tool_context: ToolContext) -> d
     await register_project_asset(account_id, project_id, generated)
     lane = max((item["lane"] for item in timeline["clips"] if item["role"] == "audio"), default=-1) + 1
     inserted = {"id": str(uuid4()), "assetId": generated_id, "start": clip["start"], "duration": min(clip["duration"], float(generated.get("duration") or clip["duration"])), "lane": lane, "sourceDuration": float(generated.get("duration") or clip["duration"]), "trimStart": 0, "role": "audio", "volume": 1}
-    result = await _mutate(tool_context, {"kind": "insert", "clip": inserted})
+    operation = {"kind": "dub", "clip_id": clip["id"], "clip": inserted} if action == "audio" else {"kind": "insert", "clip": inserted}
+    result = await _mutate(tool_context, operation)
+    result["selection"] = {"clipIds": [inserted["id"]], "playhead": inserted["start"]}
     result["asset"] = generated
     return result
 
@@ -491,13 +545,12 @@ async def translate_descriptions(language: str, tool_context: ToolContext) -> di
 
 
 TOOLS_BY_AGENT = {
-    "general": [read_timeline_shot, read_project, search_media],
-    "edit": [read_timeline_shot, read_timeline, list_project_assets, inspect_asset, search_media, insert_asset, insert_asset_at_playhead, insert_asset_next_to, insert_media_moment, move_clip, trim_clip, split_clip, delete_clip, replace_clip, set_volume],
-    "vision": [read_timeline_shot, read_selection, inspect_visual_issue, apply_audio_description, apply_spoken_text, apply_contrast, apply_colour_safe, apply_large_text],
-    "hearing": [read_timeline_shot, read_selection, read_transcript, apply_captions, apply_asl, apply_noise_reduction],
-    "deafblind": [read_timeline_shot, read_selection, read_transcript, apply_braille_text, apply_structured_description, apply_labels, apply_navigation, apply_tactile_cues],
-    "sensory": [read_timeline_shot, read_selection, inspect_sensory_issue, reduce_flash, reduce_motion, stabilize, reduce_cuts, reduce_stimulus, create_static_version],
-    "language": [read_timeline_shot, read_selection, read_speaker_turns, translate_captions, translate_audio, translate_descriptions],
+    "edit": [read_attached_skill, read_timeline_shot, read_timeline, read_selection, select_timeline_clip, read_project, list_project_assets, inspect_asset, search_media, insert_asset, insert_asset_at_playhead, insert_asset_next_to, insert_media_moment, move_clip, trim_clip, split_clip, delete_clip, replace_clip, replace_clip_track, set_volume],
+    "vision": [read_attached_skill, read_timeline_shot, read_selection, select_timeline_clip, inspect_visual_issue, apply_audio_description, apply_spoken_text, apply_contrast, apply_colour_safe, apply_large_text],
+    "hearing": [read_attached_skill, read_timeline_shot, read_selection, select_timeline_clip, read_transcript, apply_captions, apply_asl, apply_noise_reduction],
+    "deafblind": [read_attached_skill, read_timeline_shot, read_selection, select_timeline_clip, read_transcript, apply_braille_text, apply_structured_description, apply_labels, apply_navigation, apply_tactile_cues],
+    "sensory": [read_attached_skill, read_timeline_shot, read_selection, select_timeline_clip, inspect_sensory_issue, reduce_flash, reduce_motion, stabilize, reduce_cuts, reduce_stimulus, create_static_version],
+    "language": [read_attached_skill, read_timeline_shot, read_selection, select_timeline_clip, read_speaker_turns, translate_captions, translate_audio, translate_descriptions],
 }
 
 

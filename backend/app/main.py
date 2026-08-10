@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 import hmac
 import json
 import logging
@@ -12,7 +13,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.accounts import account_owns_project, authenticate_account, create_account, load_workspace, save_workspace
-from app.agent_stream import branch_session, ensure_session, stream_agent_events, update_session_context
+from app.agent_tools import TOOL_NAMES_BY_AGENT, TOOLS_BY_AGENT
+from app.agent_stream import branch_session, delete_agent_session, ensure_session, stream_agent_events, update_session_context
 from app.asl_tools import generate_asl_track
 from app.asset_storage import create_upload_session, delete_asset, open_asset_stream, verify_uploaded_asset
 from app.braille import braille_transcript
@@ -21,10 +23,11 @@ from app.config import settings
 from app.hearing_tools import reduce_background_noise
 from app.language_tools import generate_language_track
 from app.media_search import asset_transcript, index_asset, index_status, remove_asset_index, search_assets
+from app.skills import copy_chat_skills, create_skill, delete_chat_skills, set_chat_skills, skill_context, skill_detail, skill_manifest, update_skill
 from app.sensory_tools import generate_sensory_video
 from app.timeline_renderer import RenderClip, render_timeline
 from app.timeline_service import TimelineConflict, read_timeline, sync_timeline
-from app.tools.scoped_clickhouse_mcp import scoped_clickhouse_server
+from app.tools.scoped_clickhouse_mcp import SCOPED_MCP_TOOL_NAMES, scoped_clickhouse_server
 from app.transcript_service import transcript_for_asset
 from app.vision_tools import generate_vision_filter, generate_vision_narration
 
@@ -74,13 +77,36 @@ class ChatRequest(BaseModel):
     user_id: str = Field(default="local-user", min_length=1)
     session_id: str = Field(min_length=1)
     message: str = Field(min_length=1)
-    agent_id: str = Field(default="general", pattern=r"^(general|edit|vision|hearing|deafblind|sensory|language)$")
+    agent_id: str = Field(default="edit", pattern=r"^(edit|vision|hearing|deafblind|sensory|language)$")
     project_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
     selected_clip_ids: list[str] = Field(default_factory=list, max_length=20)
     playhead: float = Field(default=0, ge=0)
     timeline_revision: int = Field(default=0, ge=0)
     timeline: dict[str, object]
     timeline_shot: dict[str, object] | None = None
+
+
+class RemoteAgentToolRequest(BaseModel):
+    agent_id: str = Field(pattern=r"^(edit|vision|hearing|deafblind|sensory|language)$")
+    function_call_id: str | None = None
+    args: dict[str, object] = Field(default_factory=dict)
+    state: dict[str, object]
+
+
+class RemoteToolContext:
+    def __init__(self, state: dict[str, object], function_call_id: str | None):
+        self.state = state
+        self.function_call_id = function_call_id
+
+
+class SkillSelectionRequest(BaseModel):
+    project_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    session_id: str = Field(min_length=1, max_length=100)
+    skill_ids: list[str] = Field(default_factory=list, max_length=20)
+
+
+class SkillContentRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=50_000)
 
 
 class TimelineSyncRequest(BaseModel):
@@ -93,7 +119,7 @@ class BranchChatRequest(BaseModel):
     user_id: str = Field(default="local-user", min_length=1)
     source_session_id: str = Field(min_length=1)
     target_session_id: str = Field(min_length=1)
-    agent_id: str = Field(default="general", pattern=r"^(general|edit|vision|hearing|deafblind|sensory|language)$")
+    agent_id: str = Field(default="edit", pattern=r"^(edit|vision|hearing|deafblind|sensory|language)$")
 
 
 class AssetUploadRequest(BaseModel):
@@ -248,6 +274,27 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.post("/agent/tools/{tool_name}")
+async def run_remote_agent_tool(
+    tool_name: str,
+    body: RemoteAgentToolRequest,
+    agent_secret: Annotated[str | None, Header(alias="X-Amplifier-Agent-Secret")] = None,
+) -> dict[str, object]:
+    if not settings.internal_secret or not agent_secret or not hmac.compare_digest(agent_secret, settings.internal_secret):
+        raise HTTPException(status_code=401, detail="Agent tool authentication failed")
+    if tool_name not in TOOL_NAMES_BY_AGENT.get(body.agent_id, set()):
+        raise HTTPException(status_code=403, detail=f"{body.agent_id} cannot use {tool_name}")
+    account_id = str(body.state.get("account_id") or "")
+    project_id = str(body.state.get("project_id") or "")
+    await require_project(account_id, project_id)
+    function = next(tool for tool in TOOLS_BY_AGENT[body.agent_id] if tool.__name__ == tool_name)
+    try:
+        return await function(**body.args, tool_context=RemoteToolContext(body.state, body.function_call_id))
+    except Exception as error:
+        logger.exception("Remote agent tool %s failed", tool_name)
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
 @app.post("/accounts", status_code=201)
 async def register_account(body: AccountRequest) -> dict[str, dict[str, str]]:
     try:
@@ -288,6 +335,64 @@ async def clickhouse_health() -> dict[str, str]:
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     return {"status": "ok"}
+
+
+@app.get("/integrations/mcp/status")
+async def mcp_status(account_id: Annotated[str, Depends(authenticated_account_id)]) -> dict[str, object]:
+    del account_id
+    try:
+        await check_clickhouse()
+    except Exception as error:
+        return {"status": "disconnected", "name": "ClickHouse MCP", "tools": sorted(f"clickhouse_{name}" for name in SCOPED_MCP_TOOL_NAMES), "error": str(error)}
+    return {"status": "connected", "name": "ClickHouse MCP", "tools": sorted(f"clickhouse_{name}" for name in SCOPED_MCP_TOOL_NAMES)}
+
+
+@app.get("/skills/context")
+async def get_skill_context(project_id: str, session_id: str, account_id: Annotated[str, Depends(authenticated_account_id)]) -> dict[str, object]:
+    try:
+        context = await skill_context(account_id, project_id, session_id)
+        return {"available_skills": context["available_skills"], "selected_skill_ids": context["selected_skill_ids"]}
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.put("/skills/context")
+async def put_skill_context(body: SkillSelectionRequest, account_id: Annotated[str, Depends(authenticated_account_id)]) -> dict[str, object]:
+    try:
+        context = await set_chat_skills(account_id, body.project_id, body.session_id, body.skill_ids)
+        return {"available_skills": context["available_skills"], "selected_skill_ids": context["selected_skill_ids"]}
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+
+
+@app.post("/skills", status_code=201)
+async def post_skill(body: SkillContentRequest, account_id: Annotated[str, Depends(authenticated_account_id)]) -> dict[str, object]:
+    try:
+        return await create_skill(account_id, body.content)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.get("/skills/{skill_id}")
+async def get_skill(skill_id: str, account_id: Annotated[str, Depends(authenticated_account_id)]) -> dict[str, object]:
+    try:
+        return await skill_detail(account_id, skill_id)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.put("/skills/{skill_id}")
+async def put_skill(skill_id: str, body: SkillContentRequest, account_id: Annotated[str, Depends(authenticated_account_id)]) -> dict[str, object]:
+    try:
+        return await update_skill(account_id, skill_id, body.content)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @app.post("/assets/uploads")
@@ -594,12 +699,14 @@ async def agent_chat(body: ChatRequest, account_id: Annotated[str, Depends(authe
     if any(clip_id not in clip_ids for clip_id in body.selected_clip_ids):
         raise HTTPException(status_code=400, detail="The selected timeline clip is unavailable")
     timeline_shot = verify_timeline_shot(body.timeline_shot, body.project_id, timeline)
+    skills = await skill_context(account_id, body.project_id, body.session_id)
+    skill_documents = list(skills["selected_skill_documents"])
     await ensure_session(body.user_id, body.session_id, body.agent_id)
     await update_session_context(
         user_id=body.user_id,
         session_id=body.session_id,
         agent_id=body.agent_id,
-        state={"account_id": account_id, "project_id": body.project_id, "selected_clip_ids": body.selected_clip_ids, "playhead": body.playhead, "timeline_revision": timeline["revision"], "timeline_shot": {key: value for key, value in timeline_shot.items() if key != "image"} if timeline_shot else None},
+        state={"account_id": account_id, "project_id": body.project_id, "selected_clip_ids": body.selected_clip_ids, "playhead": body.playhead, "timeline_revision": timeline["revision"], "timeline_shot": {key: value for key, value in timeline_shot.items() if key != "image"} if timeline_shot else None, "attached_skills": [asdict(skill) for skill in skill_documents], "skill_allowed_tool_names": skills["allowed_tool_names"]},
     )
     return StreamingResponse(
         stream_agent_events(
@@ -608,6 +715,7 @@ async def agent_chat(body: ChatRequest, account_id: Annotated[str, Depends(authe
             message=body.message.strip(),
             agent_id=body.agent_id,
             timeline_shot=timeline_shot,
+            skill_manifest=skill_manifest(skill_documents),
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache"},
@@ -649,6 +757,13 @@ async def branch_agent_chat(body: BranchChatRequest, account_id: Annotated[str, 
             target_session_id=body.target_session_id,
             agent_id=body.agent_id,
         )
+        await copy_chat_skills(account_id, body.source_session_id, body.target_session_id)
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     return {"session_id": body.target_session_id}
+
+
+@app.delete("/agent/sessions/{session_id}", status_code=204)
+async def delete_agent_chat(session_id: str, account_id: Annotated[str, Depends(authenticated_account_id)]) -> None:
+    await delete_agent_session(user_id=account_id, session_id=session_id)
+    await delete_chat_skills(account_id, session_id)

@@ -20,8 +20,9 @@
 .timeline > header .toolGroup:first-child > button > svg { grid-row: 1; }
 .timeline > header .toolGroup:first-child > .askAgent { width: auto; grid-template-rows: none; align-content: normal; }
 .timeline > header .toolGroup:first-child > .askAgent > svg { grid-row: auto; }
-.timeline > header .accessibilityTools { position: absolute; left: 50%; max-width: calc(100% - 300px); gap: 2px; justify-content: center; overflow-x: auto; scrollbar-width: none; transform: translateX(-50%); }
-.timeline > header[data-mode="edit"] .toolGroup:first-child nav { position: absolute; left: 50%; justify-content: center; transform: translateX(-50%); }
+.timeline > header .toolGroup:first-child { overflow: hidden; }
+.timeline > header .accessibilityTools { min-width: 0; max-width: none; flex: 0 1 auto; gap: 2px; justify-content: flex-start; overflow-x: auto; scrollbar-width: none; }
+.timeline > header[data-mode="edit"] .toolGroup:first-child nav { min-width: 0; flex: 0 1 auto; justify-content: flex-start; overflow: hidden; }
 .timeline > header .accessibilityTools::-webkit-scrollbar { display: none; }
 .timeline > header .accessibilityTools button { width: 52px; height: 38px; flex: 0 0 52px; grid-template-rows: 17px 11px; align-content: center; }
 .accessibilityTools button span { overflow: hidden; font-size: 7px; font-weight: 600; line-height: 10px; text-overflow: ellipsis; white-space: nowrap; }
@@ -87,6 +88,5 @@
 .timeline .trimHandle { position: absolute; top: 0; bottom: 0; z-index: 4; width: 7px; height: auto; padding: 0; border: 0; background: transparent; cursor: ew-resize; touch-action: none; }
 .trimHandle[data-edge="start"] { left: 0; }
 .trimHandle[data-edge="end"] { right: 0; }
-.empty { position: absolute; inset: 0; display: grid; margin: 0; color: #aaa9a3; font-size: 10px; pointer-events: none; place-items: center; }
 .playhead { position: absolute; top: 0; bottom: 0; z-index: 5; width: 2px; background: #c65d51; pointer-events: none; }
 .playhead::before { position: absolute; top: 0; left: 50%; width: 0; height: 0; border-top: 8px solid #c65d51; border-right: 5px solid transparent; border-left: 5px solid transparent; content: ""; transform: translate(-50%, -1px); }

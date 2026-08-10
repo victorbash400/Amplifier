@@ -3,7 +3,7 @@ import type { CreatorAgentId } from "../components/creatorAgentTypes";
 
 const storageKey = "amplifier-creator-chats";
 
-export function createCreatorChat(projectId: string, agentId: CreatorAgentId = "general", contextNames: string[] = []): CreatorChat {
+export function createCreatorChat(projectId: string, agentId: CreatorAgentId = "edit", contextNames: string[] = []): CreatorChat {
   const now = Date.now();
   return {
     id: crypto.randomUUID(),
@@ -24,7 +24,12 @@ export function loadCreatorChats(projectId: string): CreatorChat[] {
   if (!Array.isArray(parsed)) throw new Error("The saved Creator chats are invalid.");
   return (parsed as CreatorChat[])
     .filter((chat) => chat.projectId === projectId)
+    .map((chat) => ({ ...chat, agentId: normalizeAgentId(chat.agentId) }))
     .sort((left, right) => right.updatedAt - left.updatedAt);
+}
+
+function normalizeAgentId(agentId: unknown): CreatorAgentId {
+  return agentId === "vision" || agentId === "hearing" || agentId === "deafblind" || agentId === "sensory" || agentId === "language" ? agentId : "edit";
 }
 
 export function saveCreatorChats(projectId: string, chats: CreatorChat[]) {

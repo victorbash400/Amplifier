@@ -1,8 +1,10 @@
 export type CreatorStreamEvent =
   | { type: "content"; content: string }
   | { type: "reasoning"; content: string }
-  | { type: "tool_call"; id: string; name: string; args: Record<string, unknown> }
-  | { type: "tool_response"; id: string; name: string; result: Record<string, unknown> }
+  | { type: "agent_start"; agent: import("../components/creatorAgentTypes").CreatorSpecialistAgentId; title: string; acknowledgement: string }
+  | { type: "agent_return"; agent: "edit"; title: string }
+  | { type: "tool_call"; id: string; name: string; args: Record<string, unknown>; surface: "timeline" | "other" }
+  | { type: "tool_response"; id: string; name: string; result: Record<string, unknown>; surface: "timeline" | "other" }
   | { type: "title"; title: string }
   | { type: "error"; error: string }
   | { type: "done" };

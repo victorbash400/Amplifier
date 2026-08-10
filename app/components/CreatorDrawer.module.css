@@ -9,8 +9,14 @@
 .drawer label { display: flex; height: 34px; margin: 3px 3px 5px; padding: 0 8px; align-items: center; gap: 7px; border: 1px solid #dededb; border-radius: 8px; color: #777773; }
 .drawer input { width: 100%; min-width: 0; border: 0; background: transparent; color: #30302e; outline: 0; font: inherit; font-size: 11px; }
 .history { display: grid; min-height: 0; padding-top: 5px; align-content: start; gap: 2px; overflow-y: auto; border-top: 1px solid #eeeeeb; }
-.drawer .history button { display: block; width: 100%; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
-.drawer .history button[aria-current="page"] { background: #ecece9; color: #191918; font-weight: 600; }
+.history article { position: relative; display: flex; min-width: 0; border-radius: 7px; }
+.drawer .history .chat { display: flex; width: 100%; padding-right: 32px; overflow: hidden; text-align: left; white-space: nowrap; }
+.drawer .history .chat svg { flex: 0 0 auto; color: #777773; }
+.drawer .history .chat span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.drawer .history .chat[aria-current="page"] { background: #ecece9; color: #191918; font-weight: 600; }
+.drawer .history .remove { position: absolute; top: 3px; right: 3px; display: grid; width: 28px; height: 28px; padding: 0; place-items: center; color: #888883; opacity: 0; }
+.history article:hover .remove, .history article:focus-within .remove { opacity: 1; }
+.drawer .history .remove:hover { background: #e3e3df; color: #a13d35; }
 .history p { margin: 14px 8px; color: #999994; font-size: 10px; text-align: center; }
 
 @media (prefers-reduced-motion: reduce) {

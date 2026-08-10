@@ -1,4 +1,5 @@
 .form {
+  position: relative;
   width: 100%;
   margin: 0 auto;
   filter: drop-shadow(0 8px 18px rgb(0 0 0 / 8%));

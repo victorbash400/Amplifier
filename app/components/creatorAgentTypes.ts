@@ -1,6 +1,7 @@
 import type { TimelineMode } from "./TimelineModeSwitcher";
 
-export type CreatorAgentId = "general" | TimelineMode;
+export type CreatorAgentId = TimelineMode;
+export type CreatorSpecialistAgentId = Exclude<CreatorAgentId, "edit">;
 
 export type CreatorAgentRequest = {
   agentId: CreatorAgentId;
@@ -9,8 +10,7 @@ export type CreatorAgentRequest = {
 };
 
 const agentNames: Record<CreatorAgentId, string> = {
-  general: "General Agent",
-  edit: "Edit Agent",
+  edit: "Agent",
   vision: "Vision Agent",
   hearing: "Hearing Agent",
   deafblind: "Deafblind Agent",

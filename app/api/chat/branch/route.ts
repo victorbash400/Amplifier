@@ -14,7 +14,7 @@ export async function POST(request: Request) {
     method: "POST",
     headers: { "Content-Type": "application/json", ...context.headers },
     body: JSON.stringify({
-      agent_id: body.agentId || "general",
+      agent_id: body.agentId || "edit",
       source_session_id: body.sourceSessionId,
       target_session_id: body.targetSessionId,
       user_id: context.account.id,

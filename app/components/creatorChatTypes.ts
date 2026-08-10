@@ -25,6 +25,7 @@ export type CreatorChat = {
   messages: CreatorMessage[];
   createdAt: number;
   updatedAt: number;
+  branchedFromChatId?: string;
   agentId?: import("./creatorAgentTypes").CreatorAgentId;
   contextNames?: string[];
 };

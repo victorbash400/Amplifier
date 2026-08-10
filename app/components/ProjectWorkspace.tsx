@@ -31,7 +31,9 @@ export function ProjectWorkspace({ assetsOpen, creatorOpen, project, folders, fi
   const [timelineTime, setTimelineTime] = useState(0);
   const [timelinePlaying, setTimelinePlaying] = useState(false);
   const [viewerShare, setViewerShare] = useState(48);
-  const [agentActive, setAgentActive] = useState(false);
+  const [timelineAgentActive, setTimelineAgentActive] = useState(false);
+  const [agentTimelineMode, setAgentTimelineMode] = useState<CreatorAgentId>();
+  const [agentSelectionCommand, setAgentSelectionCommand] = useState<{ clipIds: string[]; playhead: number; token: string }>();
   const [agentCommitToken, setAgentCommitToken] = useState(0);
   const [agentSelection, setAgentSelection] = useState<{ clipIds: string[]; playhead: number }>({ clipIds: [], playhead: 0 });
   const creatorRef = useRef<CreatorPanelHandle>(null);
@@ -76,7 +78,14 @@ export function ProjectWorkspace({ assetsOpen, creatorOpen, project, folders, fi
       timeline.applyCanonical(document, availableFiles);
       if (result.change && typeof result.change === "object") setAgentCommitToken((current) => current + 1);
     }
+    if (result.selection && typeof result.selection === "object") {
+      const selection = result.selection as Record<string, unknown>;
+      const clipIds = Array.isArray(selection.clipIds) ? selection.clipIds.filter((id): id is string => typeof id === "string") : [];
+      const playhead = typeof selection.playhead === "number" ? selection.playhead : timelineTime;
+      setAgentSelection({ clipIds, playhead });
+      setAgentSelectionCommand({ clipIds, playhead, token: crypto.randomUUID() });
+    }
   }
   const agentTimeline = timelineDocument(timeline.revision, timeline.clips, timeline.trackCounts, captionTrack, aslTrack);
-  return <section className={styles.workspace} data-panel-layout={layout} ref={workspaceRef} style={{ "--viewer-share": `${viewerShare}%` } as CSSProperties}><FileSidebar files={files} folders={folders} onFilesChange={onFilesChange} onFoldersChange={onFoldersChange} onOpenFile={openFile} project={project} /><PreviewPanel selectedFile={selectedFile} selectedFileStart={selectedFileStart} timeline={timelinePreview} /><CreatorPanel files={files} hidden={!creatorOpen} onActivityChange={setAgentActive} onToolResponse={applyAgentResult} playhead={agentSelection.playhead} projectId={project.id} ref={creatorRef} selectedClipIds={agentSelection.clipIds} timeline={agentTimeline} /><WorkspacePanelResizer containerRef={workspaceRef} onChange={setViewerShare} onCommit={commitViewerShare} value={viewerShare} /><TimelinePanel agentActive={agentActive} agentCommitToken={agentCommitToken} aslTrack={aslTrack} captionTrack={captionTrack} clips={timeline.clips} error={timeline.error} files={files} folders={folders} onAskAgent={askAgent} onAslChange={timeline.setAslTrack} onCaptionsChange={timeline.setCaptionTrack} onClipsChange={timeline.updateClips} onFilesChange={onFilesChange} onPlayingChange={setTimelinePlaying} onSelectionChange={handleAgentSelection} onTimeChange={setTimelineTime} onTrackCountsChange={timeline.updateTrackCounts} playing={timelinePlaying} time={timelineTime} trackCounts={timeline.trackCounts} /></section>;
+  return <section className={styles.workspace} data-panel-layout={layout} ref={workspaceRef} style={{ "--viewer-share": `${viewerShare}%` } as CSSProperties}><FileSidebar files={files} folders={folders} onFilesChange={onFilesChange} onFoldersChange={onFoldersChange} onOpenFile={openFile} project={project} /><PreviewPanel selectedFile={selectedFile} selectedFileStart={selectedFileStart} timeline={timelinePreview} /><CreatorPanel files={files} hidden={!creatorOpen} onActiveAgentChange={setAgentTimelineMode} onTimelineActivityChange={setTimelineAgentActive} onToolResponse={applyAgentResult} playhead={agentSelection.playhead} projectId={project.id} ref={creatorRef} selectedClipIds={agentSelection.clipIds} timeline={agentTimeline} /><WorkspacePanelResizer containerRef={workspaceRef} onChange={setViewerShare} onCommit={commitViewerShare} value={viewerShare} /><TimelinePanel agentCommitToken={agentCommitToken} agentMode={agentTimelineMode} agentSelection={agentSelectionCommand} aslTrack={aslTrack} captionTrack={captionTrack} clips={timeline.clips} error={timeline.error} files={files} folders={folders} onAskAgent={askAgent} onAslChange={timeline.setAslTrack} onCaptionsChange={timeline.setCaptionTrack} onClipsChange={timeline.updateClips} onFilesChange={onFilesChange} onPlayingChange={setTimelinePlaying} onSelectionChange={handleAgentSelection} onTimeChange={setTimelineTime} onTrackCountsChange={timeline.updateTrackCounts} playing={timelinePlaying} time={timelineTime} timelineAgentActive={timelineAgentActive} trackCounts={timeline.trackCounts} /></section>;
 }

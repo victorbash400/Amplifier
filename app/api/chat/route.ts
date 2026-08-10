@@ -12,7 +12,7 @@ export async function POST(request: Request) {
   const response = await fetch(`${backendUrl.replace(/\/$/, "")}/agent/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...context.headers },
-    body: JSON.stringify({ agent_id: body.agentId || "general", user_id: context.account.id, session_id: body.sessionId, message, project_id: body.projectId, selected_clip_ids: body.selectedClipIds || [], playhead: body.playhead || 0, timeline_revision: body.timelineRevision, timeline: body.timeline, timeline_shot: body.timelineShot }),
+    body: JSON.stringify({ agent_id: body.agentId || "edit", user_id: context.account.id, session_id: body.sessionId, message, project_id: body.projectId, selected_clip_ids: body.selectedClipIds || [], playhead: body.playhead || 0, timeline_revision: body.timelineRevision, timeline: body.timeline, timeline_shot: body.timelineShot }),
     signal: request.signal,
   });
   if (!response.ok || !response.body) {

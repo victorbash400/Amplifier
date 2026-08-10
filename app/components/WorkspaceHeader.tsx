@@ -23,7 +23,7 @@ export function WorkspaceHeader({ assetsOpen, creatorOpen, projectOpen, userName
       </nav>
       <AmplifierBrand />
       <nav className={styles.actions} aria-label="Workspace actions">
-        {projectOpen ? <button aria-pressed={creatorOpen} onClick={onToggleCreator} type="button">{creatorOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}Creator</button> : <button onClick={onNewProject} type="button"><Plus size={15} />New project</button>}<AccountButton name={userName} />
+        {projectOpen ? <button aria-pressed={creatorOpen} onClick={onToggleCreator} type="button">{creatorOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}Agent</button> : <button onClick={onNewProject} type="button"><Plus size={15} />New project</button>}<AccountButton name={userName} />
       </nav>
     </header>
   );

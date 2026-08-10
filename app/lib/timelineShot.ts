@@ -20,6 +20,63 @@ export async function captureTimelineShot(projectId: string, timeline: TimelineD
   const clips = timeline.clips.map((clip) => ({ id: clip.id, assetId: clip.assetId, name: names.get(clip.assetId) || "Unavailable media", role: clip.role, lane: clip.lane, start: clip.start, end: clip.start + clip.duration, trimStart: clip.trimStart, duration: clip.duration, ...(clip.linkId ? { linkId: clip.linkId } : {}) }));
   const visibleEnd = Math.max(20, ...clips.map((clip) => clip.end));
   const tracks = (["visual", "audio"] as const).flatMap((role) => Array.from({ length: timeline.trackCounts[role] }, (_, lane) => ({ id: `${role}-${lane}`, role, lane })));
+  const shot: TimelineShot = {
+    id: crypto.randomUUID(), projectId, revision: timeline.revision, capturedAt: new Date().toISOString(), image: "", imageWidth: 928, imageHeight: 286,
+    view: { playhead, selectedClipIds, visibleStart: 0, visibleEnd }, tracks, clips,
+    diagnostics: diagnostics(clips),
+  };
+  const rendered = renderTimelineShot(shot);
+  shot.image = rendered.image;
+  shot.imageWidth = rendered.width;
+  shot.imageHeight = rendered.height;
+  return shot;
+}
+
+export function timelineShotFromToolResult(projectId: string, result: Record<string, unknown>, files: ProjectFile[]) {
+  const raw = result.shot;
+  if (!raw || typeof raw !== "object") return undefined;
+  const value = raw as Record<string, unknown>;
+  if (value.projectId !== projectId || !Array.isArray(value.clips)) return undefined;
+  const names = new Map(files.map((file) => [file.id, file.name]));
+  const clips: TimelineShot["clips"] = value.clips.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const clip = item as Record<string, unknown>;
+    if (typeof clip.id !== "string" || typeof clip.assetId !== "string" || (clip.role !== "visual" && clip.role !== "audio") || typeof clip.lane !== "number" || typeof clip.start !== "number" || typeof clip.duration !== "number" || typeof clip.trimStart !== "number") return [];
+    const role: "visual" | "audio" = clip.role;
+    return [{ id: clip.id, assetId: clip.assetId, name: typeof clip.assetName === "string" ? clip.assetName : names.get(clip.assetId) || "Unavailable media", role, lane: clip.lane, start: clip.start, end: clip.start + clip.duration, trimStart: clip.trimStart, duration: clip.duration, ...(typeof clip.linkId === "string" ? { linkId: clip.linkId } : {}) }];
+  });
+  const counts = value.trackCounts && typeof value.trackCounts === "object" ? value.trackCounts as Record<string, unknown> : {};
+  const tracks: TimelineShot["tracks"] = Array.isArray(value.tracks) ? value.tracks.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const track = item as Record<string, unknown>;
+    if ((track.role !== "visual" && track.role !== "audio") || typeof track.lane !== "number") return [];
+    const role: "visual" | "audio" = track.role;
+    return [{ id: typeof track.id === "string" ? track.id : `${role}-${track.lane}`, role, lane: track.lane }];
+  }) : (["visual", "audio"] as const).flatMap((role) => Array.from({ length: Math.max(1, Number(counts[role]) || 1) }, (_, lane) => ({ id: `${role}-${lane}`, role, lane })));
+  const nestedView = value.view && typeof value.view === "object" ? value.view as Record<string, unknown> : {};
+  const selectedClipIds = Array.isArray(value.selectedClipIds) ? value.selectedClipIds.filter((id): id is string => typeof id === "string") : Array.isArray(nestedView.selectedClipIds) ? nestedView.selectedClipIds.filter((id): id is string => typeof id === "string") : [];
+  const visibleEnd = Math.max(20, ...clips.map((clip) => clip.end));
+  const shot: TimelineShot = {
+    id: typeof value.id === "string" ? value.id : crypto.randomUUID(),
+    projectId,
+    revision: Number(value.revision) || 0,
+    capturedAt: typeof value.capturedAt === "string" ? value.capturedAt : new Date().toISOString(),
+    image: "",
+    imageWidth: 928,
+    imageHeight: 286,
+    view: { playhead: Number(value.playhead ?? nestedView.playhead) || 0, selectedClipIds, visibleStart: 0, visibleEnd },
+    tracks,
+    clips,
+    diagnostics: diagnostics(clips),
+  };
+  const rendered = renderTimelineShot(shot);
+  shot.image = rendered.image;
+  shot.imageWidth = rendered.width;
+  shot.imageHeight = rendered.height;
+  return shot;
+}
+
+function diagnostics(clips: TimelineShot["clips"]): TimelineShot["diagnostics"] {
   const overlaps: string[][] = [];
   for (let index = 0; index < clips.length; index += 1) for (let other = index + 1; other < clips.length; other += 1) {
     const left = clips[index];
@@ -30,16 +87,7 @@ export async function captureTimelineShot(projectId: string, timeline: TimelineD
   const gaps = visual.slice(1).flatMap((clip, index) => clip.start > visual[index].end ? [{ start: visual[index].end, end: clip.start }] : []);
   const links = new Map<string, number>();
   clips.forEach((clip) => { if (clip.linkId) links.set(clip.linkId, (links.get(clip.linkId) || 0) + 1); });
-  const shot: TimelineShot = {
-    id: crypto.randomUUID(), projectId, revision: timeline.revision, capturedAt: new Date().toISOString(), image: "", imageWidth: 928, imageHeight: 286,
-    view: { playhead, selectedClipIds, visibleStart: 0, visibleEnd }, tracks, clips,
-    diagnostics: { overlaps, gaps, brokenLinks: clips.filter((clip) => clip.linkId && links.get(clip.linkId) === 1).map((clip) => clip.id), outOfBoundsClipIds: clips.filter((clip) => clip.start < 0 || clip.duration <= 0 || clip.trimStart < 0).map((clip) => clip.id) },
-  };
-  const rendered = renderTimelineShot(shot);
-  shot.image = rendered.image;
-  shot.imageWidth = rendered.width;
-  shot.imageHeight = rendered.height;
-  return shot;
+  return { overlaps, gaps, brokenLinks: clips.filter((clip) => clip.linkId && links.get(clip.linkId) === 1).map((clip) => clip.id), outOfBoundsClipIds: clips.filter((clip) => clip.start < 0 || clip.duration <= 0 || clip.trimStart < 0).map((clip) => clip.id) };
 }
 
 function renderTimelineShot(shot: TimelineShot) {

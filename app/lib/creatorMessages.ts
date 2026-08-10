@@ -2,8 +2,9 @@ import type { CreatorBlock, CreatorMessage, CreatorToolCall } from "../component
 import type { CreatorStreamEvent } from "./creatorStream";
 
 export function applyCreatorEvent(messages: CreatorMessage[], event: CreatorStreamEvent) {
-  if (event.type === "done" || event.type === "title") return finishReasoning(messages);
+  if (event.type === "done" || event.type === "title" || event.type === "agent_return") return finishReasoning(messages);
   const current = ensureAssistant(messages);
+  if (event.type === "agent_start") return updateLast(current, (blocks) => [...finishBlocks(blocks), { id: crypto.randomUUID(), kind: "text", content: event.acknowledgement }]);
   if (event.type === "content" || event.type === "reasoning") return updateLast(current, (blocks) => appendText(blocks, event.type === "content" ? "text" : "reasoning", event.content));
   if (event.type === "tool_call") return updateLast(current, (blocks) => upsertTool(blocks, { id: event.id, name: event.name, status: "running", detail: summarize(event.args), args: event.args }));
   if (event.type === "tool_response") return updateLast(current, (blocks) => {

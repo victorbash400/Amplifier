@@ -29,7 +29,9 @@ const baseDuration = 20;
 const trailingRoom = 8;
 
 type TimelinePanelProps = {
-  agentActive?: boolean;
+  agentMode?: CreatorAgentId;
+  agentSelection?: { clipIds: string[]; playhead: number; token: string };
+  timelineAgentActive?: boolean;
   agentCommitToken?: number;
   aslTrack?: TimelineAslTrack;
   captionTrack?: TimelineCaptionTrack;
@@ -51,7 +53,7 @@ type TimelinePanelProps = {
   trackCounts: TimelineTrackCounts;
 };
 
-export function TimelinePanel({ agentActive = false, agentCommitToken = 0, aslTrack, captionTrack, clips, error, files, folders, onAskAgent, onAslChange, onCaptionsChange, onClipsChange, onFilesChange, onPlayingChange, onSelectionChange, onTimeChange, onTrackCountsChange, playing, time, trackCounts }: TimelinePanelProps) {
+export function TimelinePanel({ agentCommitToken = 0, agentMode, agentSelection, aslTrack, captionTrack, clips, error, files, folders, onAskAgent, onAslChange, onCaptionsChange, onClipsChange, onFilesChange, onPlayingChange, onSelectionChange, onTimeChange, onTrackCountsChange, playing, time, timelineAgentActive = false, trackCounts }: TimelinePanelProps) {
   const canvasRef = useRef<HTMLElement>(null);
   const viewportRef = useRef<HTMLElement>(null);
   const dragOffset = useRef(0);
@@ -85,15 +87,25 @@ export function TimelinePanel({ agentActive = false, agentCommitToken = 0, aslTr
   const timelineDuration = Math.max(baseDuration, ...clips.map((clip) => clip.start + clip.duration + trailingRoom));
   const contentDuration = Math.max(0, ...clips.map((clip) => clip.start + clip.duration));
   const tracks = editingTracks ?? buildTimelineTracks(clips, dropActive, clips, trackCounts);
+  const activeMode = agentMode ?? mode;
   const selectedClip = clips.find((clip) => clip.id === selectedId);
   const selectedGroup = selectedClip?.linkId ? clips.filter((clip) => clip.linkId === selectedClip.linkId) : selectedClip ? [selectedClip] : [];
   const selectedHasVisual = selectedGroup.some((clip) => clip.role === "visual");
   const selectedHasAudio = selectedGroup.some((clip) => clip.role === "audio");
   const selectedHearingMedia = selectedGroup.some((clip) => clip.asset.type.startsWith("audio/") || clip.asset.type.startsWith("video/"));
-  const modeClipSelected = mode === "vision" || mode === "sensory" ? selectedHasVisual : mode === "hearing" ? selectedHasAudio : Boolean(selectedClip);
-  const modeLabel = `${mode.charAt(0).toUpperCase()}${mode.slice(1)}`;
+  const modeClipSelected = activeMode === "vision" || activeMode === "sensory" ? selectedHasVisual : activeMode === "hearing" ? selectedHasAudio : Boolean(selectedClip);
+  const modeLabel = `${activeMode.charAt(0).toUpperCase()}${activeMode.slice(1)}`;
+  const agentLabel = activeMode === "edit" ? "Agent" : `${modeLabel} Agent`;
 
   useEffect(() => { playbackTime.current = time; }, [time]);
+  useEffect(() => {
+    if (!agentSelection) return;
+    const frame = requestAnimationFrame(() => {
+      setSelectedId(agentSelection.clipIds[0]);
+      onTimeChange(agentSelection.playhead);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [agentSelection, onTimeChange]);
   useEffect(() => { onSelectionChange?.(selectedId ? [selectedId] : [], time); }, [onSelectionChange, selectedId, time]);
   useEffect(() => {
     let frame = 0;
@@ -517,11 +529,11 @@ export function TimelinePanel({ agentActive = false, agentCommitToken = 0, aslTr
 
   return (
     <section className={styles.timeline} aria-label="Timeline">
-      <header data-mode={mode}>
+      <header data-mode={activeMode}>
         <section className={styles.toolGroup}>
           <strong>{modeLabel}</strong>
-          <button aria-label={`Ask ${modeLabel} Agent`} className={styles.askAgent} onClick={() => onAskAgent(mode, selectedClip ? [selectedClip.asset.name] : [])} title={`Ask ${modeLabel} Agent`} type="button"><SquarePen size={15} /><span>{modeLabel} Agent</span></button>
-          {mode === "language" ? <TimelineLanguageTools clipSelected={Boolean(selectedClip)} onAction={(action, language) => void runLanguageTool(action, language)} working={languageWorking} /> : mode !== "edit" ? <TimelineAccessibilityTools clipSelected={mode === "hearing" ? selectedHearingMedia : modeClipSelected} mode={mode} noiseReduction={selectedClip?.asset.noiseReduction} onContrastChange={mode === "vision" ? setClipContrast : undefined} onHearingAction={mode === "hearing" ? (action, source) => void runHearingTool(action, source) : undefined} onNoiseReduction={mode === "hearing" ? (value) => void runNoiseReduction(value) : undefined} onSensoryAction={mode === "sensory" ? (action) => void runSensoryTool(action) : undefined} onVisionAction={mode === "vision" ? (action, preset) => void runVisionTool(action, preset) : undefined} visionAdjustments={selectedGroup.find((clip) => clip.role === "visual")?.visionAdjustments} working={mode === "hearing" ? hearingWorking : mode === "sensory" ? sensoryWorking : visionWorking} /> : <nav aria-label="Timeline edit tools">
+          <button aria-label={`Ask ${agentLabel}`} className={styles.askAgent} onClick={() => onAskAgent(activeMode, selectedClip ? [selectedClip.asset.name] : [])} title={`Ask ${agentLabel}`} type="button"><SquarePen size={15} /><span>{agentLabel}</span></button>
+          {activeMode === "language" ? <TimelineLanguageTools clipSelected={Boolean(selectedClip)} onAction={(action, language) => void runLanguageTool(action, language)} working={languageWorking} /> : activeMode !== "edit" ? <TimelineAccessibilityTools clipSelected={activeMode === "hearing" ? selectedHearingMedia : modeClipSelected} mode={activeMode} noiseReduction={selectedClip?.asset.noiseReduction} onContrastChange={activeMode === "vision" ? setClipContrast : undefined} onHearingAction={activeMode === "hearing" ? (action, source) => void runHearingTool(action, source) : undefined} onNoiseReduction={activeMode === "hearing" ? (value) => void runNoiseReduction(value) : undefined} onSensoryAction={activeMode === "sensory" ? (action) => void runSensoryTool(action) : undefined} onVisionAction={activeMode === "vision" ? (action, preset) => void runVisionTool(action, preset) : undefined} visionAdjustments={selectedGroup.find((clip) => clip.role === "visual")?.visionAdjustments} working={activeMode === "hearing" ? hearingWorking : activeMode === "sensory" ? sensoryWorking : visionWorking} /> : <nav aria-label="Timeline edit tools">
             <button aria-label="Select" type="button"><MousePointer2 size={15} /></button>
             <button aria-keyshortcuts="Meta+Z Control+Z" aria-label="Undo" disabled={!undoCount} onClick={undo} type="button"><Undo2 size={15} /></button>
             <button aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z" aria-label="Redo" disabled={!redoCount} onClick={redo} type="button"><Redo2 size={15} /></button>
@@ -532,7 +544,7 @@ export function TimelinePanel({ agentActive = false, agentCommitToken = 0, aslTr
           </nav>}
         </section>
         <section className={styles.playback}><button aria-keyshortcuts="Space" aria-label={playing ? "Pause" : "Play"} onClick={() => onPlayingChange(!playing)} type="button">{playing ? <Pause size={16} /> : <Play size={16} />}</button><time>{formatTimecode(time)}</time></section>
-        <section className={styles.toolGroup} data-end>{mode !== "edit" && <button aria-label="Delete selected clip" disabled={!selectedId || Boolean(visionWorking || hearingWorking || sensoryWorking)} onClick={() => deleteSelected()} title="Delete selected clip" type="button"><Trash2 size={15} /></button>}{selectedClip?.role === "audio" && <TimelineClipVolumeControl name={selectedClip.asset.name} onChange={setClipVolume} value={selectedClip.volume ?? 1} />}<nav aria-label="Timeline view"><button aria-keyshortcuts="-" aria-label="Zoom out" disabled={scale <= 1} onClick={() => setScale((value) => Math.max(1, value - 1))} type="button"><ZoomOut size={15} /></button><button aria-keyshortcuts="0" aria-label="Fit timeline" onClick={fitTimeline} type="button"><Maximize2 size={15} /></button><button aria-keyshortcuts="+" aria-label="Zoom in" disabled={scale >= 8} onClick={() => setScale((value) => Math.min(8, value + 1))} type="button"><ZoomIn size={15} /></button></nav><button aria-label="Export timeline as MP4" disabled={!clips.length || exporting} onClick={() => { setExportError(undefined); setExportOpen(true); }} title="Export timeline as MP4" type="button"><Download size={15} /></button></section>
+        <section className={styles.toolGroup} data-end>{activeMode !== "edit" && <button aria-label="Delete selected clip" disabled={!selectedId || Boolean(visionWorking || hearingWorking || sensoryWorking)} onClick={() => deleteSelected()} title="Delete selected clip" type="button"><Trash2 size={15} /></button>}{selectedClip?.role === "audio" && <TimelineClipVolumeControl name={selectedClip.asset.name} onChange={setClipVolume} value={selectedClip.volume ?? 1} />}<nav aria-label="Timeline view"><button aria-keyshortcuts="-" aria-label="Zoom out" disabled={scale <= 1} onClick={() => setScale((value) => Math.max(1, value - 1))} type="button"><ZoomOut size={15} /></button><button aria-keyshortcuts="0" aria-label="Fit timeline" onClick={fitTimeline} type="button"><Maximize2 size={15} /></button><button aria-keyshortcuts="+" aria-label="Zoom in" disabled={scale >= 8} onClick={() => setScale((value) => Math.min(8, value + 1))} type="button"><ZoomIn size={15} /></button></nav><button aria-label="Export timeline as MP4" disabled={!clips.length || exporting} onClick={() => { setExportError(undefined); setExportOpen(true); }} title="Export timeline as MP4" type="button"><Download size={15} /></button></section>
       </header>
       <section className={styles.composition}>
         {(dropError || visionError || error) && <p className={styles.dropError} role="alert">{dropError || visionError || error}</p>}
@@ -543,9 +555,8 @@ export function TimelinePanel({ agentActive = false, agentCommitToken = 0, aslTr
             <section className={styles.timelineCanvas} style={{ "--timeline-scale": scale } as CSSProperties}>
               <TimelineRuler duration={timelineDuration} scale={scale} />
               <section aria-label="Editable timeline" className={styles.canvas} onDragEnter={() => setDropActive(true)} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropActive(false); }} onDragOver={(event) => event.preventDefault()} onDrop={dropAsset} onPointerDown={startScrub} onPointerMove={scrub} ref={canvasRef}>
-                <TimelineAgentScan active={agentActive} />
+                <TimelineAgentScan active={timelineAgentActive} />
                 {clips.map((clip) => <TimelineClipItem clip={clip} dragOffsetRef={dragOffset} handlers={clipHandlers} key={clip.id} processing={clip.id === visionClipId} selected={clip.id === selectedId} timelineDuration={timelineDuration} />)}
-                {!clips.length && <p className={styles.empty}>Drag media here</p>}
                 <button aria-label="Resize video and audio track areas" className={styles.avDivider} onPointerDown={resizeDivider} onPointerMove={resizeDivider} type="button" />
                 <i aria-hidden="true" className={styles.playhead} style={{ left: `${(time / timelineDuration) * 100}%` }} />
               </section>
@@ -554,7 +565,7 @@ export function TimelinePanel({ agentActive = false, agentCommitToken = 0, aslTr
         </section>
         <TimelineHorizontalScrollbar scale={scale} viewportRef={viewportRef} />
       </section>
-      <TimelineModeSwitcher onChange={setMode} selected={mode} />
+      <TimelineModeSwitcher onChange={setMode} selected={activeMode} />
       {exportOpen && <TimelineExportModal busy={exporting} error={exportError} folders={folders} initialName="Untitled timeline" onCancel={() => setExportOpen(false)} onSave={(name, folderId) => void exportTimeline(name, folderId)} />}
     </section>
   );
