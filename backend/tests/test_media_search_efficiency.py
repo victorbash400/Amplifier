@@ -4,10 +4,30 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.media_search import _embed_contents, queue_asset
+from app.media_search import _embed_contents, _moment_document, queue_asset, search_assets
 
 
 class MediaSearchEfficiencyTests(unittest.TestCase):
+    def test_moment_document_keeps_asset_context_and_timed_evidence(self) -> None:
+        document = _moment_document("daylife.mp4", "A morning routine with coffee and pottery.", "A woman holds a mug.", "")
+        self.assertIn("context: A morning routine with coffee and pottery.", document)
+        self.assertIn("moment: A woman holds a mug.", document)
+
+    def test_search_returns_multiple_ranked_moments_from_the_same_asset(self) -> None:
+        rows = [
+            (f"moment-{index}", "asset", "daylife.mp4", "key", "video/mp4", "root", f"thumb-{index}", index * 2, index * 2 + 2, f"frame {index}", "", 0.9 - index * 0.01)
+            for index in range(6)
+        ]
+        client = MagicMock()
+        client.query = AsyncMock(return_value=SimpleNamespace(result_rows=rows))
+        client.close = AsyncMock()
+        with patch("app.media_search.embed_query", AsyncMock(return_value=[1.0] + [0.0] * 767)), patch("app.media_search.clickhouse_client", AsyncMock(return_value=client)), patch("app.media_search._ensure_schema", AsyncMock()):
+            results = asyncio.run(search_assets("project", "coffee", 18))
+        self.assertEqual([result["moment_id"] for result in results], [f"moment-{index}" for index in range(6)])
+        query = client.query.await_args.args[0]
+        self.assertIn("ORDER BY score DESC", query)
+        self.assertNotIn("asset_counts", query)
+
     def test_embedding_two_requests_one_content_per_media_moment(self) -> None:
         models = MagicMock()
         async def embed_content(*, contents, **_kwargs):
