@@ -12,11 +12,12 @@ import tempfile
 from collections.abc import Awaitable, Callable
 
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 from google.cloud import storage
 
 from app.clickhouse import clickhouse_client
 from app.config import settings
+from app.database import advisory_lock
 from app.media_indexing import INDEX_ANALYSIS_MODEL, IndexedMoment, build_local_index
 
 
@@ -28,6 +29,7 @@ SEARCH_VECTOR_DIMENSIONS = 768
 _schema_lock = asyncio.Lock()
 _schema_ready = False
 _asset_locks: dict[tuple[str, str], asyncio.Lock] = {}
+_embedding_concurrency = 8
 
 
 ProgressCallback = Callable[[dict[str, object]], Awaitable[None]]
@@ -36,13 +38,13 @@ ProgressCallback = Callable[[dict[str, object]], Awaitable[None]]
 async def index_asset(*, project_id: str, asset_id: str, object_key: str, name: str, content_type: str, folder_id: str, duration: float | None = None, force: bool = False, on_progress: ProgressCallback | None = None) -> dict[str, object]:
     _validate_asset(project_id, asset_id, object_key, content_type)
     lock = _asset_locks.setdefault((project_id, asset_id), asyncio.Lock())
-    async with lock:
+    async with advisory_lock(f"media-index:{project_id}"), lock:
         return await _index_asset_locked(project_id=project_id, asset_id=asset_id, object_key=object_key, name=name, content_type=content_type, folder_id=folder_id, duration=duration, force=force, on_progress=on_progress)
 
 
 async def _index_asset_locked(*, project_id: str, asset_id: str, object_key: str, name: str, content_type: str, folder_id: str, duration: float | None, force: bool, on_progress: ProgressCallback | None) -> dict[str, object]:
     existing = await _asset_index_state(project_id, asset_id)
-    if existing and not force and existing[0] in {"ready", "indexing", "failed"}:
+    if existing and (existing[0] == "ready" or (existing[0] == "failed" and not force)):
         return {"asset_id": asset_id, "status": existing[0], "stage": existing[1], "error": existing[2], "reused": True}
     await _write_index_row(project_id=project_id, asset_id=asset_id, object_key=object_key, name=name, content_type=content_type, folder_id=folder_id, status="indexing", stage="Downloading source")
     await _progress(on_progress, asset_id, "indexing", "Downloading source", 0)
@@ -75,6 +77,25 @@ async def _index_asset_locked(*, project_id: str, asset_id: str, object_key: str
         source.unlink(missing_ok=True)
 
 
+async def queue_asset(*, project_id: str, asset_id: str, object_key: str, name: str, content_type: str, folder_id: str, force: bool = False) -> dict[str, object]:
+    _validate_asset(project_id, asset_id, object_key, content_type)
+    async with advisory_lock(f"media-index:{project_id}"):
+        existing = await _asset_index_state(project_id, asset_id)
+        if existing and (existing[0] in {"ready", "queued", "indexing"} or (existing[0] == "failed" and not force)):
+            return {"asset_id": asset_id, "status": existing[0], "stage": existing[1], "error": existing[2], "reused": True}
+        await _write_index_row(
+            project_id=project_id,
+            asset_id=asset_id,
+            object_key=object_key,
+            name=name,
+            content_type=content_type,
+            folder_id=folder_id,
+            status="queued",
+            stage="Queued",
+        )
+    return {"asset_id": asset_id, "status": "queued", "stage": "Queued", "progress": 0, "reused": False}
+
+
 async def _progress(callback: ProgressCallback | None, asset_id: str, status: str, stage: object, progress: int) -> None:
     if callback:
         await callback({"asset_id": asset_id, "status": status, "stage": str(stage), "progress": progress})
@@ -91,10 +112,31 @@ async def index_status(project_id: str) -> list[dict[str, object]]:
         states = []
         for row in result.result_rows:
             updated_at = row[5].replace(tzinfo=timezone.utc) if row[5].tzinfo is None else row[5]
-            active_lock = _asset_locks.get((project_id, row[0]))
-            interrupted = row[2] == "indexing" and not (active_lock and active_lock.locked())
-            states.append({"asset_id": row[0], "name": row[1], "status": "failed" if interrupted else row[2], "stage": "Interrupted" if interrupted else row[3], "updated_at": updated_at.isoformat(), **({"error": "Indexing was interrupted; retry this file"} if interrupted else ({"error": row[4]} if row[4] else {}))})
+            states.append({"asset_id": row[0], "name": row[1], "status": row[2], "stage": row[3], "updated_at": updated_at.isoformat(), **({"error": row[4]} if row[4] else {})})
         return states
+    finally:
+        await client.close()
+
+
+async def pending_index_assets() -> list[dict[str, object]]:
+    client = await clickhouse_client()
+    try:
+        await _ensure_schema(client)
+        result = await client.query(
+            "SELECT project_id, asset_id, object_key, asset_name, content_type, folder_id FROM asset_search_index FINAL WHERE status IN ('queued', 'indexing') AND schema_version = {schema_version:UInt16}",
+            parameters={"schema_version": SEARCH_SCHEMA_VERSION},
+        )
+        return [
+            {
+                "project_id": row[0],
+                "asset_id": row[1],
+                "object_key": row[2],
+                "name": row[3],
+                "content_type": row[4],
+                "folder_id": row[5],
+            }
+            for row in result.result_rows
+        ]
     finally:
         await client.close()
 
@@ -195,12 +237,27 @@ async def _embed_documents(documents: list[str]) -> list[list[float]]:
 async def _embed_contents(contents: list[str], task_type: str) -> list[list[float]]:
     client = genai.Client(vertexai=True, project=settings.google_cloud_project, location=settings.google_cloud_location)
     try:
-        embeddings: list[list[float]] = []
-        for offset in range(0, len(contents), 100):
-            response = await client.aio.models.embed_content(model=SEARCH_EMBEDDING_MODEL, contents=contents[offset:offset + 100], config=types.EmbedContentConfig(task_type=task_type, output_dimensionality=SEARCH_VECTOR_DIMENSIONS))
-            if not response.embeddings or len(response.embeddings) != len(contents[offset:offset + 100]):
-                raise RuntimeError("Embedding model did not return one vector per media moment")
-            embeddings.extend(_normalized_vector(item.values) for item in response.embeddings)
+        semaphore = asyncio.Semaphore(_embedding_concurrency)
+
+        async def embed(value: str) -> list[float]:
+            async with semaphore:
+                for attempt in range(3):
+                    try:
+                        response = await client.aio.models.embed_content(
+                            model=SEARCH_EMBEDDING_MODEL,
+                            contents=value,
+                            config=types.EmbedContentConfig(task_type=task_type, output_dimensionality=SEARCH_VECTOR_DIMENSIONS),
+                        )
+                        break
+                    except errors.APIError as error:
+                        if error.code not in {429, 500, 502, 503, 504} or attempt == 2:
+                            raise
+                        await asyncio.sleep(0.5 * (2 ** attempt))
+            if not response.embeddings or len(response.embeddings) != 1:
+                raise RuntimeError("Embedding model did not return a vector for a media moment")
+            return _normalized_vector(response.embeddings[0].values)
+
+        embeddings = await asyncio.gather(*(embed(value) for value in contents))
     finally:
         await client.aio.aclose()
     return embeddings

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 
 from app.config import settings
 from app.media_transcription import TranscriptSegment, TranscriptWord, transcribe_media
@@ -20,6 +20,7 @@ from app.media_transcription import TranscriptSegment, TranscriptWord, transcrib
 INDEX_ANALYSIS_MODEL = "gemini-3-flash-preview"
 WINDOW_SECONDS = 2.0
 FRAME_BATCH_SIZE = 12
+FRAME_BATCH_CONCURRENCY = 2
 
 
 @dataclass(frozen=True)
@@ -77,7 +78,13 @@ async def _describe_video(source: Path, duration: float) -> list[IndexedMoment]:
     frames = _extract_frames(source, duration)
     try:
         batches = [frames[index:index + FRAME_BATCH_SIZE] for index in range(0, len(frames), FRAME_BATCH_SIZE)]
-        results = await asyncio.gather(*(_describe_frame_batch(batch) for batch in batches))
+        semaphore = asyncio.Semaphore(FRAME_BATCH_CONCURRENCY)
+
+        async def describe(batch: list[tuple[float, float, Path]]) -> list[IndexedMoment]:
+            async with semaphore:
+                return await _describe_frame_batch(batch)
+
+        results = await asyncio.gather(*(describe(batch) for batch in batches))
         moments = [moment for batch in results for moment in batch]
         if len(moments) != len(frames):
             raise RuntimeError(f"Gemini described {len(moments)} of {len(frames)} video windows")
@@ -187,16 +194,23 @@ def _transcript_in_range(segments: list[TranscriptSegment], start: float, end: f
 async def _generate(parts: list[types.Part], *, max_output_tokens: int, response_mime_type: str | None = None):
     client = genai.Client(vertexai=True, project=settings.google_cloud_project, location=settings.google_cloud_location)
     try:
-        return await client.aio.models.generate_content(
-            model=INDEX_ANALYSIS_MODEL,
-            contents=parts,
-            config=types.GenerateContentConfig(
-                temperature=0.1,
-                max_output_tokens=max_output_tokens,
-                response_mime_type=response_mime_type,
-                thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL),
-            ),
-        )
+        for attempt in range(3):
+            try:
+                return await client.aio.models.generate_content(
+                    model=INDEX_ANALYSIS_MODEL,
+                    contents=parts,
+                    config=types.GenerateContentConfig(
+                        temperature=0.1,
+                        max_output_tokens=max_output_tokens,
+                        response_mime_type=response_mime_type,
+                        thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL),
+                    ),
+                )
+            except errors.APIError as error:
+                if error.code not in {429, 500, 502, 503, 504} or attempt == 2:
+                    raise
+                await asyncio.sleep(0.5 * (2 ** attempt))
+        raise RuntimeError("Gemini media analysis did not complete")
     finally:
         await client.aio.aclose()
 

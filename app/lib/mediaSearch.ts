@@ -1,4 +1,4 @@
-export type MediaIndexStatus = "missing" | "indexing" | "ready" | "failed";
+export type MediaIndexStatus = "missing" | "queued" | "indexing" | "ready" | "failed";
 
 export type MediaAssetState = {
   assetId: string;

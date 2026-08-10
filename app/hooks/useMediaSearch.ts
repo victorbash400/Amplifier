@@ -4,8 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MediaAssetState, MediaSearchResult } from "../lib/mediaSearch";
 import type { ProjectFile } from "../types/workspace";
 
-const indexingConcurrency = 4;
-const indexingRequestTimeout = 9 * 60_000;
 const searchDelay = 200;
 
 export function useMediaSearch(projectId: string, files: ProjectFile[], active: boolean, query: string) {
@@ -60,39 +58,43 @@ export function useMediaSearch(projectId: string, files: ProjectFile[], active: 
 
   useEffect(() => {
     if (!active || loadedStatusKey !== statusKey) return;
-    const activeIndexing = searchableFiles.filter((file) => states[file.id]?.status === "indexing").length;
-    if (activeIndexing >= indexingConcurrency) return;
-    const available = indexingConcurrency - activeIndexing;
+    const activeIndexing = searchableFiles.some((file) => states[file.id]?.status === "indexing" || states[file.id]?.status === "queued");
+    if (activeIndexing) return;
     const candidates = searchableFiles.filter((file) => (states[file.id]?.status === "missing" || !states[file.id] || retrying.has(file.id)) && !indexing.current.has(file.id) && !skipped.has(file.id));
-    const pending = selectPending(candidates, available, searchableFiles.some((file) => file.type.startsWith("video/") && states[file.id]?.status === "indexing"));
-    const timers: number[] = [];
-    for (const file of pending) {
-      indexing.current.add(file.id);
-      const timer = window.setTimeout(() => {
-        setRetrying((current) => without(current, file.id));
-        void fetch("/api/search", {
+    if (!candidates.length) return;
+    for (const file of candidates) indexing.current.add(file.id);
+    const timer = window.setTimeout(() => {
+      setRetrying((current) => new Set([...current].filter((assetId) => !candidates.some((file) => file.id === assetId))));
+      setStates((current) => Object.fromEntries(Object.entries(current).concat(candidates.map((file) => [file.id, { assetId: file.id, name: file.name, status: "queued" as const, stage: "Queued", progress: 0 }]))));
+      void fetch("/api/search", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "index", projectId, assetId: file.id, objectKey: file.objectKey, name: file.name, contentType: file.type, folderId: file.folderId, duration: file.duration, force: retrying.has(file.id) }),
-          signal: AbortSignal.timeout(indexingRequestTimeout),
+          body: JSON.stringify({ action: "index", projectId, assets: candidates.map((file) => ({ assetId: file.id, objectKey: file.objectKey, name: file.name, contentType: file.type, folderId: file.folderId, duration: file.duration, force: retrying.has(file.id) })) }),
         }).then(async (response) => {
-          if (!response.ok || !response.body) throw new Error(`Could not index ${file.name}`);
+          if (!response.ok || !response.body) throw new Error("Could not queue media indexing");
           cache.current.clear();
           await readIndexEvents(response.body, (event) => {
+            const file = candidates.find((candidate) => candidate.id === event.assetId);
+            if (!file) return;
             setStates((current) => ({ ...current, [file.id]: { assetId: file.id, name: file.name, status: event.status, stage: event.stage, progress: event.progress, error: event.error, updatedAt: event.status === "ready" ? new Date().toISOString() : current[file.id]?.updatedAt } }));
           });
         }).catch((reason) => {
           const error = message(reason);
           setError(error);
-          setStates((current) => ({ ...current, [file.id]: { assetId: file.id, name: file.name, status: "failed", stage: "Failed", error } }));
+          void loadStatus().then((authoritative) => {
+            setStates((current) => Object.fromEntries(Object.entries(current).map(([assetId, state]) => {
+              if (!candidates.some((file) => file.id === assetId)) return [assetId, state];
+              return [assetId, authoritative[assetId] || { ...state, status: "failed" as const, stage: "Failed", error }];
+            })));
+          }).catch(() => {
+            setStates((current) => Object.fromEntries(Object.entries(current).map(([assetId, state]) => candidates.some((file) => file.id === assetId) ? [assetId, { ...state, status: "failed" as const, stage: "Failed", error }] : [assetId, state])));
+          });
         }).finally(() => {
-          indexing.current.delete(file.id);
+          for (const file of candidates) indexing.current.delete(file.id);
         });
-      });
-      timers.push(timer);
-    }
-    return () => timers.forEach((timer) => window.clearTimeout(timer));
-  }, [active, loadedStatusKey, projectId, retrying, searchableFiles, skipped, states, statusKey]);
+    });
+    return () => window.clearTimeout(timer);
+  }, [active, loadedStatusKey, loadStatus, projectId, retrying, searchableFiles, skipped, states, statusKey]);
 
   useEffect(() => {
     if (!active) return;
@@ -132,7 +134,7 @@ export function useMediaSearch(projectId: string, files: ProjectFile[], active: 
   }, []);
   const failed = searchableFiles.flatMap((file) => states[file.id]?.status === "failed" && !skipped.has(file.id) && !retrying.has(file.id) ? [{ id: file.id, name: file.name, error: states[file.id].error }] : []);
   const ready = searchableFiles.filter((file) => states[file.id]?.status === "ready").length;
-  const indexingCount = searchableFiles.filter((file) => states[file.id]?.status === "indexing").length;
+  const indexingCount = searchableFiles.filter((file) => states[file.id]?.status === "indexing" || states[file.id]?.status === "queued").length;
   const skippedCount = searchableFiles.filter((file) => skipped.has(file.id)).length;
   const skipFailed = useCallback(() => setSkipped((current) => new Set([...current, ...failed.map((file) => file.id)])), [failed]);
   const retrySkipped = useCallback(() => {
@@ -142,7 +144,7 @@ export function useMediaSearch(projectId: string, files: ProjectFile[], active: 
   return { checking: active && loadedStatusKey !== statusKey, error: active ? error : undefined, failed, indexingCount, ready, refreshStatus, refreshing, results: active && query.trim().length >= 2 ? results : [], retry, retrySkipped, searching, skipFailed, skippedCount, states, total: searchableFiles.length };
 }
 
-async function readIndexEvents(stream: ReadableStream<Uint8Array>, onEvent: (event: { status: MediaAssetState["status"]; stage: string; progress?: number; error?: string }) => void) {
+async function readIndexEvents(stream: ReadableStream<Uint8Array>, onEvent: (event: { assetId: string; status: MediaAssetState["status"]; stage: string; progress?: number; error?: string }) => void) {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -151,30 +153,20 @@ async function readIndexEvents(stream: ReadableStream<Uint8Array>, onEvent: (eve
     buffer += decoder.decode(value, { stream: !done });
     const lines = buffer.split("\n");
     buffer = lines.pop() || "";
-    for (const line of lines) if (line.trim()) onEvent(JSON.parse(line));
+    for (const line of lines) if (line.trim()) onEvent(normalizeIndexEvent(JSON.parse(line)));
     if (done) break;
   }
-  if (buffer.trim()) onEvent(JSON.parse(buffer));
+  if (buffer.trim()) onEvent(normalizeIndexEvent(JSON.parse(buffer)));
+}
+
+function normalizeIndexEvent(event: { asset_id: string; status: MediaAssetState["status"]; stage: string; progress?: number; error?: string }) {
+  return { assetId: event.asset_id, status: event.status, stage: event.stage, progress: event.progress, error: event.error };
 }
 
 function without(values: Set<string>, value: string) {
   const next = new Set(values);
   next.delete(value);
   return next;
-}
-
-function selectPending(files: ProjectFile[], available: number, videoActive: boolean) {
-  const selected: ProjectFile[] = [];
-  let videoAvailable = !videoActive;
-  for (const file of files) {
-    if (selected.length >= available) break;
-    if (file.type.startsWith("video/")) {
-      if (!videoAvailable) continue;
-      videoAvailable = false;
-    }
-    selected.push(file);
-  }
-  return selected;
 }
 
 function message(reason: unknown) {

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -12,6 +14,7 @@ from app.config import settings
 
 
 _pool: asyncpg.Pool | None = None
+_local_advisory_locks: dict[str, asyncio.Lock] = {}
 
 
 class PostgresCursor:
@@ -99,6 +102,23 @@ async def connect(sqlite_path: str | Path) -> AsyncIterator[aiosqlite.Connection
         finally:
             if not database.ended:
                 await database.rollback()
+
+
+@asynccontextmanager
+async def advisory_lock(name: str) -> AsyncIterator[None]:
+    if not settings.app_database_url and not settings.database_socket:
+        lock = _local_advisory_locks.setdefault(name, asyncio.Lock())
+        async with lock:
+            yield
+        return
+    key = int.from_bytes(hashlib.sha256(name.encode()).digest()[:8], signed=True)
+    pool = await _postgres_pool()
+    async with pool.acquire() as connection:
+        await connection.execute("SELECT pg_advisory_lock($1)", key)
+        try:
+            yield
+        finally:
+            await connection.execute("SELECT pg_advisory_unlock($1)", key)
 
 
 def _postgres_query(query: str) -> str:

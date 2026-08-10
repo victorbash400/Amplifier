@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.accounts import account_owns_project, authenticate_account, create_account, load_workspace, save_workspace
+from app.accounts import account_owns_project, authenticate_account, create_account, load_workspace, project_asset, save_workspace
 from app.agent_tools import TOOL_NAMES_BY_AGENT, TOOLS_BY_AGENT
 from app.agent_stream import branch_session, delete_agent_session, ensure_session, stream_agent_events, update_session_context
 from app.asl_tools import generate_asl_track
@@ -22,7 +22,7 @@ from app.clickhouse import check_clickhouse
 from app.config import settings
 from app.hearing_tools import reduce_background_noise
 from app.language_tools import generate_language_track
-from app.media_search import asset_transcript, index_asset, index_status, remove_asset_index, search_assets
+from app.media_search import asset_transcript, index_asset, index_status, pending_index_assets, queue_asset, remove_asset_index, search_assets
 from app.skills import copy_chat_skills, create_skill, delete_chat_skills, set_chat_skills, skill_context, skill_detail, skill_manifest, update_skill
 from app.sensory_tools import generate_sensory_video
 from app.timeline_renderer import RenderClip, render_timeline
@@ -38,6 +38,9 @@ mcp_app = scoped_clickhouse_server.streamable_http_app()
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     async with scoped_clickhouse_server.session_manager.run():
+        task = asyncio.create_task(resume_pending_indexes())
+        background_index_tasks.add(task)
+        task.add_done_callback(background_index_tasks.discard)
         yield
 
 
@@ -45,6 +48,20 @@ app = FastAPI(title="Amplifier API", lifespan=lifespan)
 app.mount("/mcp", mcp_app)
 logger = logging.getLogger(__name__)
 background_index_tasks: set[asyncio.Task[None]] = set()
+index_queue_lock = asyncio.Lock()
+
+
+async def resume_pending_indexes() -> None:
+    try:
+        pending = await pending_index_assets()
+    except Exception:
+        logger.exception("Could not restore pending media indexing jobs")
+        return
+    for asset in pending:
+        try:
+            await index_asset(**asset, force=True)
+        except Exception:
+            logger.exception("Restored media indexing failed for asset %s in project %s", asset["asset_id"], asset["project_id"])
 
 
 class AccountRequest(BaseModel):
@@ -153,6 +170,10 @@ class MediaIndexRequest(BaseModel):
     folder_id: str = Field(default="root", min_length=1, max_length=100)
     duration: float | None = Field(default=None, ge=0)
     force: bool = False
+
+
+class MediaIndexBatchRequest(BaseModel):
+    assets: list[MediaIndexRequest] = Field(min_length=1, max_length=100)
 
 
 class MediaSearchRequest(BaseModel):
@@ -475,37 +496,84 @@ async def media_index_status(project_id: str, account_id: Annotated[str, Depends
 
 @app.post("/search/index")
 async def create_media_index(body: MediaIndexRequest, account_id: Annotated[str, Depends(authenticated_account_id)]) -> StreamingResponse:
-    await require_project(account_id, body.project_id)
-    async def events():
-        queue: asyncio.Queue[dict[str, object] | None] = asyncio.Queue()
+    return await create_media_index_batch(MediaIndexBatchRequest(assets=[body]), account_id)
 
-        async def progress(event: dict[str, object]) -> None:
-            await queue.put(event)
 
-        async def run() -> None:
-            try:
-                result = await index_asset(
-                    project_id=body.project_id,
-                    asset_id=body.asset_id,
-                    object_key=body.object_key,
-                    name=body.name,
-                    content_type=body.content_type,
-                    folder_id=body.folder_id,
-                    duration=body.duration,
-                    force=body.force,
-                    on_progress=progress,
+@app.post("/search/index/batch")
+async def create_media_index_batch(body: MediaIndexBatchRequest, account_id: Annotated[str, Depends(authenticated_account_id)]) -> StreamingResponse:
+    project_ids = {asset.project_id for asset in body.assets}
+    if len(project_ids) != 1:
+        raise HTTPException(status_code=400, detail="An indexing batch must belong to one project")
+    project_id = next(iter(project_ids))
+    await require_project(account_id, project_id)
+    assets: list[MediaIndexRequest] = []
+    seen_assets: set[str] = set()
+    for requested in body.assets:
+        if requested.asset_id in seen_assets:
+            continue
+        stored = await project_asset(account_id, project_id, requested.asset_id)
+        if not stored:
+            raise HTTPException(status_code=404, detail=f"Media asset {requested.asset_id} was not found")
+        object_key = str(stored.get("objectKey") or "")
+        content_type = str(stored.get("type") or "")
+        if not object_key or not content_type:
+            raise HTTPException(status_code=409, detail=f"Media asset {requested.asset_id} is not ready for indexing")
+        assets.append(requested.model_copy(update={
+            "object_key": object_key,
+            "name": str(stored.get("name") or requested.name),
+            "content_type": content_type,
+            "folder_id": str(stored.get("folderId") or "root"),
+            "duration": stored.get("duration") if isinstance(stored.get("duration"), (int, float)) else requested.duration,
+        }))
+        seen_assets.add(requested.asset_id)
+    queue: asyncio.Queue[dict[str, object] | None] = asyncio.Queue()
+
+    async def progress(event: dict[str, object]) -> None:
+        await queue.put(event)
+
+    async def run() -> None:
+        try:
+            queued_assets: list[MediaIndexRequest] = []
+            for asset in assets:
+                queued = await queue_asset(
+                    project_id=asset.project_id,
+                    asset_id=asset.asset_id,
+                    object_key=asset.object_key,
+                    name=asset.name,
+                    content_type=asset.content_type,
+                    folder_id=asset.folder_id,
+                    force=asset.force,
                 )
-                if result.get("reused"):
-                    await queue.put(result)
-            except Exception as error:
-                logger.exception("Media indexing failed for asset %s in project %s", body.asset_id, body.project_id)
-                await queue.put({"asset_id": body.asset_id, "status": "failed", "stage": "Failed", "error": str(error)})
-            finally:
-                await queue.put(None)
+                await progress(queued)
+                if not queued["reused"]:
+                    queued_assets.append(asset)
+            async with index_queue_lock:
+                for asset in queued_assets:
+                    try:
+                        result = await index_asset(
+                            project_id=asset.project_id,
+                            asset_id=asset.asset_id,
+                            object_key=asset.object_key,
+                            name=asset.name,
+                            content_type=asset.content_type,
+                            folder_id=asset.folder_id,
+                            duration=asset.duration,
+                            force=asset.force,
+                            on_progress=progress,
+                        )
+                        if result.get("reused"):
+                            await queue.put(result)
+                    except Exception as error:
+                        logger.exception("Media indexing failed for asset %s in project %s", asset.asset_id, asset.project_id)
+                        await queue.put({"asset_id": asset.asset_id, "status": "failed", "stage": "Failed", "error": str(error)})
+        finally:
+            await queue.put(None)
 
-        task = asyncio.create_task(run())
-        background_index_tasks.add(task)
-        task.add_done_callback(background_index_tasks.discard)
+    task = asyncio.create_task(run())
+    background_index_tasks.add(task)
+    task.add_done_callback(background_index_tasks.discard)
+
+    async def events():
         while True:
             event = await queue.get()
             if event is None:
