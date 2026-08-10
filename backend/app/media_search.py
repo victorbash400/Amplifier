@@ -193,20 +193,24 @@ async def search_assets(project_id: str, query: str, limit: int = 18) -> list[di
             """
             WITH
                 ready_assets AS (
-                    SELECT asset_id FROM asset_search_index FINAL
+                    SELECT asset_id,
+                           hasAllTokens(lowerUTF8(document), lowerUTF8({query:String})) AS asset_lexical_match,
+                           ngramSearchCaseInsensitiveUTF8(document, {query:String}) AS asset_fuzzy_score
+                    FROM asset_search_index FINAL
                     WHERE project_id = {project_id:String} AND status = 'ready'
                       AND schema_version = {schema_version:UInt16}
                 )
-            SELECT moment_id, asset_id, asset_name, object_key, content_type, folder_id, thumbnail_key,
+            SELECT moment_id, moments.asset_id, asset_name, object_key, content_type, folder_id, thumbnail_key,
                    start, end, description, transcript,
                    1 - cosineDistance(embedding, {embedding:Array(Float32)}) AS vector_score,
                    hasAllTokens(lowerUTF8(concat(description, ' ', transcript)), lowerUTF8({query:String})) AS lexical_match,
-                   ngramSearchCaseInsensitiveUTF8(concat(description, ' ', transcript), {query:String}) AS fuzzy_score
-            FROM asset_search_moments FINAL
-            WHERE project_id = {project_id:String} AND schema_version = {schema_version:UInt16}
-              AND length(embedding) = {dimensions:UInt16}
-              AND asset_id IN ready_assets
-            ORDER BY lexical_match DESC, fuzzy_score DESC, vector_score DESC
+                   ngramSearchCaseInsensitiveUTF8(concat(description, ' ', transcript), {query:String}) AS fuzzy_score,
+                   asset_lexical_match, asset_fuzzy_score
+            FROM asset_search_moments AS moments FINAL
+            INNER JOIN ready_assets USING (asset_id)
+            WHERE moments.project_id = {project_id:String} AND moments.schema_version = {schema_version:UInt16}
+              AND length(moments.embedding) = {dimensions:UInt16}
+            ORDER BY lexical_match DESC, fuzzy_score DESC, asset_lexical_match DESC, asset_fuzzy_score DESC, vector_score DESC
             LIMIT {candidate_limit:UInt16}
             """,
             parameters={"embedding": embedding, "query": clean_query, "project_id": project_id, "schema_version": SEARCH_SCHEMA_VERSION, "dimensions": SEARCH_VECTOR_DIMENSIONS, "candidate_limit": min(limit * 3, 54)},
@@ -216,10 +220,16 @@ async def search_assets(project_id: str, query: str, limit: int = 18) -> list[di
             return []
         exact = [row for row in rows if bool(row[12])]
         fuzzy = [row for row in rows if float(row[13]) >= 0.75]
+        exact_assets = [row for row in rows if bool(row[14])]
+        fuzzy_assets = [row for row in rows if float(row[15]) >= 0.75]
         if exact:
             ranked = exact
         elif fuzzy:
             ranked = fuzzy
+        elif exact_assets:
+            ranked = exact_assets
+        elif fuzzy_assets:
+            ranked = fuzzy_assets
         else:
             best_vector_score = max(float(row[11]) for row in rows)
             minimum_score = max(0.55, best_vector_score - 0.12)
@@ -231,7 +241,7 @@ async def search_assets(project_id: str, query: str, limit: int = 18) -> list[di
             if asset_counts.get(asset_id, 0) >= 4:
                 continue
             asset_counts[asset_id] = asset_counts.get(asset_id, 0) + 1
-            score = float(row[11]) + (0.14 if row[12] else 0.1 * float(row[13]))
+            score = float(row[11]) + (0.14 if row[12] else 0.1 * float(row[13])) + (0.08 if row[14] else 0.05 * float(row[15]))
             results.append({"moment_id": row[0], "asset_id": asset_id, "asset_name": row[2], "object_key": row[3], "content_type": row[4], "folder_id": row[5], "thumbnail_key": row[6], "start": float(row[7]), "end": float(row[8]), "description": row[9], "transcript": row[10], "score": round(min(1, score), 4)})
             if len(results) >= limit:
                 break
