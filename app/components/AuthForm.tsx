@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
 import { demoAccount } from "../lib/demoAccount";
 import styles from "../sign-in/sign-in.module.css";
+import { PasswordField } from "./PasswordField";
 
 type Mode = "signin" | "create";
 
@@ -46,5 +47,5 @@ export function AuthForm() {
     setError(undefined);
   }
 
-  return <><form className={styles.form} onSubmit={submit}>{mode === "create" && <label>Name<input autoComplete="name" onChange={(event) => setName(event.target.value)} value={name} /></label>}<label>Email<input autoComplete="username" onChange={(event) => setEmail(event.target.value)} type="email" value={email} /></label><label>Password<input autoComplete={mode === "signin" ? "current-password" : "new-password"} onChange={(event) => setPassword(event.target.value)} type="password" value={password} /></label>{error && <p className={styles.error} role="alert">{error}</p>}<button disabled={!email || !password || (mode === "create" && !name) || submitting} type="submit">{submitting ? "Working" : mode === "signin" ? "Sign in" : "Create account"}</button></form><p className={styles.switchPrompt}>{mode === "signin" ? "New to Amplifier?" : "Already have an account?"}<button onClick={() => { setMode(mode === "signin" ? "create" : "signin"); setError(undefined); }} type="button">{mode === "signin" ? "Create account" : "Sign in"}</button></p>{mode === "signin" && <button className={styles.demo} onClick={useDemo} type="button">Use demo account</button>}</>;
+  return <><form className={styles.form} onSubmit={submit}>{mode === "create" && <label>Name<input autoComplete="name" onChange={(event) => setName(event.target.value)} value={name} /></label>}<label>Email<input autoComplete="username" onChange={(event) => setEmail(event.target.value)} type="email" value={email} /></label><PasswordField autoComplete={mode === "signin" ? "current-password" : "new-password"} onChange={setPassword} value={password} />{error && <p className={styles.error} role="alert">{error}</p>}<button disabled={!email || !password || (mode === "create" && !name) || submitting} type="submit">{submitting ? "Working" : mode === "signin" ? "Sign in" : "Create account"}</button></form><p className={styles.switchPrompt}>{mode === "signin" ? "New to Amplifier?" : "Already have an account?"}<button onClick={() => { setMode(mode === "signin" ? "create" : "signin"); setError(undefined); }} type="button">{mode === "signin" ? "Create account" : "Sign in"}</button></p>{mode === "signin" && <button className={styles.demo} onClick={useDemo} type="button">Use demo account</button>}</>;
 }
