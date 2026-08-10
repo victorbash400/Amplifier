@@ -22,7 +22,7 @@ from app.clickhouse import check_clickhouse
 from app.config import settings
 from app.hearing_tools import reduce_background_noise
 from app.language_tools import generate_language_track
-from app.media_search import asset_transcript, index_asset, index_status, pending_index_assets, queue_asset, remove_asset_index, search_assets
+from app.media_search import asset_transcript, index_asset, index_status, pending_index_assets, queue_asset, refresh_legacy_moment_embeddings, remove_asset_index, search_assets
 from app.skills import copy_chat_skills, create_skill, delete_chat_skills, set_chat_skills, skill_context, skill_detail, skill_manifest, update_skill
 from app.sensory_tools import generate_sensory_video
 from app.timeline_renderer import RenderClip, render_timeline
@@ -52,6 +52,12 @@ index_queue_lock = asyncio.Lock()
 
 
 async def resume_pending_indexes() -> None:
+    try:
+        refreshed = await refresh_legacy_moment_embeddings()
+        if refreshed:
+            logger.info("Refreshed %s legacy media search embeddings", refreshed)
+    except Exception:
+        logger.exception("Could not refresh legacy media search embeddings")
     try:
         pending = await pending_index_assets()
     except Exception:

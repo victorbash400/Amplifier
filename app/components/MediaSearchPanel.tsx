@@ -33,12 +33,11 @@ export function MediaSearchPanel({ checking, error, failed, files, indexing, onO
   const isChecking = checking || (searchableFiles.length > 0 && searchableFiles.every((file) => states[file.id]?.stage === "Checking"));
 
   let content;
-  if (searching) content = <ol aria-label="Searching" className={styles.skeletons}><li /><li /><li /></ol>;
-  else if (cleanQuery.length >= 2) content = results.length
-    ? <ol className={styles.results}>{results.map((result) => <MediaSearchResultRow file={files.find((file) => file.id === result.assetId)} key={result.momentId} onOpen={onOpen} result={result} />)}</ol>
-    : <p className={styles.empty}>No matching moments</p>;
-  else if (total) content = <section className={styles.indexState}><MediaIndexStatusList checking={isChecking} files={searchableFiles} onRetry={onRetry} states={states} /></section>;
-  else content = <section className={styles.prompt}><Image alt="" height={30} src="/accessible-media-icons/search-document-svgrepo-com.svg" width={30} /><strong>Search moments in your media</strong><span>Recall anything with a few words</span></section>;
+  if (cleanQuery.length < 2 && total) content = <section className={styles.indexState}><MediaIndexStatusList checking={isChecking} files={searchableFiles} onRetry={onRetry} states={states} /></section>;
+  else if (cleanQuery.length < 2) content = <section className={styles.prompt}><Image alt="" height={30} src="/accessible-media-icons/search-document-svgrepo-com.svg" width={30} /><strong>Search moments in your media</strong><span>Recall anything with a few words</span></section>;
+  else if (searching) content = <ol aria-label="Searching" className={styles.skeletons}><li /><li /><li /></ol>;
+  else if (results.length) content = <ol className={styles.results}>{results.map((result) => <MediaSearchResultRow file={files.find((file) => file.id === result.assetId)} key={result.momentId} onOpen={onOpen} result={result} />)}</ol>;
+  else content = <p className={styles.empty}>No matching moments</p>;
 
   return <section aria-busy={isChecking || searching || indexing > 0} aria-label="Media search results" className={styles.panel}>
     {content}

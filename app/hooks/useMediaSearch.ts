@@ -17,6 +17,7 @@ export function useMediaSearch(projectId: string, files: ProjectFile[], active: 
   const [retrying, setRetrying] = useState<Set<string>>(() => new Set());
   const indexing = useRef(new Set<string>());
   const cache = useRef(new Map<string, MediaSearchResult[]>());
+  const searchVersion = useRef(0);
   const searchableFiles = useMemo(() => files.filter((file) => !file.pending && file.objectKey && /^(video|audio|image)\//.test(file.type)), [files]);
   const assetSignature = searchableFiles.map((file) => `${file.id}:${file.generation}`).join("|");
   const statusKey = `${projectId}:${assetSignature}`;
@@ -97,15 +98,26 @@ export function useMediaSearch(projectId: string, files: ProjectFile[], active: 
   }, [active, loadedStatusKey, loadStatus, projectId, retrying, searchableFiles, skipped, states, statusKey]);
 
   useEffect(() => {
-    if (!active) return;
+    const version = ++searchVersion.current;
+    if (!active) {
+      setSearching(false);
+      return;
+    }
     const cleanQuery = query.trim().replace(/\s+/g, " ");
-    if (cleanQuery.length < 2) return;
+    if (cleanQuery.length < 2) {
+      setSearching(false);
+      setResults([]);
+      return;
+    }
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       const cacheKey = `${statusKey}:${cleanQuery}`;
       const cached = cache.current.get(cacheKey);
       if (cached) {
-        setResults(cached);
+        if (version === searchVersion.current) {
+          setResults(cached);
+          setSearching(false);
+        }
         return;
       }
       setSearching(true);
@@ -116,11 +128,11 @@ export function useMediaSearch(projectId: string, files: ProjectFile[], active: 
         if (!response.ok || !body.results) throw new Error(body.error || "Media search failed");
         const next = body.results.map((result) => ({ momentId: result.moment_id, assetId: result.asset_id, assetName: result.asset_name, objectKey: result.object_key, contentType: result.content_type, folderId: result.folder_id, thumbnailKey: result.thumbnail_key, description: result.description, transcript: result.transcript, start: result.start, end: result.end, score: result.score }));
         cache.current.set(cacheKey, next);
-        setResults(next);
+        if (version === searchVersion.current) setResults(next);
       } catch (reason) {
-        if (!(reason instanceof DOMException && reason.name === "AbortError")) setError(message(reason));
+        if (version === searchVersion.current && !(reason instanceof DOMException && reason.name === "AbortError")) setError(message(reason));
       } finally {
-        if (!controller.signal.aborted) setSearching(false);
+        if (version === searchVersion.current) setSearching(false);
       }
     }, searchDelay);
     return () => { window.clearTimeout(timer); controller.abort(); };

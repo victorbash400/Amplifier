@@ -23,6 +23,7 @@ from app.media_indexing import INDEX_ANALYSIS_MODEL, IndexedMoment, build_local_
 
 SEARCH_SCHEMA_VERSION = 3
 SEARCH_EMBEDDING_MODEL = "gemini-embedding-2"
+SEARCH_EMBEDDING_REVISION = f"{SEARCH_EMBEDDING_MODEL}:moment-v2"
 SEARCH_ANALYSIS_MODEL = INDEX_ANALYSIS_MODEL
 SEARCH_VECTOR_DIMENSIONS = 768
 
@@ -59,7 +60,7 @@ async def _index_asset_locked(*, project_id: str, asset_id: str, object_key: str
         silence_ranges = json.dumps([item.__dict__ for item in media_index.silence], separators=(",", ":"))
         await _write_index_row(project_id=project_id, asset_id=asset_id, object_key=object_key, name=name, content_type=content_type, folder_id=folder_id, status="indexing", stage="Creating search embeddings", document=document, silence_ranges=silence_ranges)
         await _progress(on_progress, asset_id, "indexing", "Creating search embeddings", 60)
-        embeddings = await _embed_documents([f"{name}. {moment.description}. {moment.transcript}" for moment in moments])
+        embeddings = await _embed_documents([f"{moment.description}. {moment.transcript}" for moment in moments])
         summary_embedding = (await _embed_documents([f"{name}. {document}"]))[0]
         await _write_index_row(project_id=project_id, asset_id=asset_id, object_key=object_key, name=name, content_type=content_type, folder_id=folder_id, status="indexing", stage="Rendering previews", document=document, silence_ranges=silence_ranges, embedding=summary_embedding)
         await _progress(on_progress, asset_id, "indexing", "Rendering previews", 75)
@@ -141,6 +142,45 @@ async def pending_index_assets() -> list[dict[str, object]]:
         await client.close()
 
 
+async def refresh_legacy_moment_embeddings() -> int:
+    async with advisory_lock(f"media-search-embedding:{SEARCH_EMBEDDING_REVISION}"):
+        client = await clickhouse_client()
+        try:
+            await _ensure_schema(client)
+            result = await client.query(
+                """
+                SELECT project_id, asset_id, moment_id, object_key, asset_name, content_type, folder_id,
+                       thumbnail_key, start, end, description, transcript, analysis_model, schema_version
+                FROM asset_search_moments FINAL
+                WHERE schema_version = {schema_version:UInt16}
+                  AND embedding_model != {embedding_revision:String}
+                ORDER BY project_id, asset_id, start
+                """,
+                parameters={"schema_version": SEARCH_SCHEMA_VERSION, "embedding_revision": SEARCH_EMBEDDING_REVISION},
+            )
+            source_rows = result.result_rows
+        finally:
+            await client.close()
+        if not source_rows:
+            return 0
+        embeddings = await _embed_documents([f"{row[10]}. {row[11]}" for row in source_rows])
+        now = datetime.now(timezone.utc)
+        rows = [
+            [*row[:12], embedding, SEARCH_EMBEDDING_REVISION, row[12], row[13], now]
+            for row, embedding in zip(source_rows, embeddings, strict=True)
+        ]
+        client = await clickhouse_client()
+        try:
+            await client.insert(
+                "asset_search_moments",
+                rows,
+                column_names=["project_id", "asset_id", "moment_id", "object_key", "asset_name", "content_type", "folder_id", "thumbnail_key", "start", "end", "description", "transcript", "embedding", "embedding_model", "analysis_model", "schema_version", "updated_at"],
+            )
+        finally:
+            await client.close()
+        return len(rows)
+
+
 async def search_assets(project_id: str, query: str, limit: int = 18) -> list[dict[str, object]]:
     clean_query = " ".join(query.split())
     if len(clean_query) < 2 or len(clean_query) > 240:
@@ -156,26 +196,17 @@ async def search_assets(project_id: str, query: str, limit: int = 18) -> list[di
                     SELECT asset_id FROM asset_search_index FINAL
                     WHERE project_id = {project_id:String} AND status = 'ready'
                       AND schema_version = {schema_version:UInt16}
-                ),
-                lexical_assets AS (
-                    SELECT DISTINCT asset_id
-                    FROM asset_search_moments FINAL
-                    WHERE project_id = {project_id:String}
-                      AND schema_version = {schema_version:UInt16}
-                      AND asset_id IN ready_assets
-                      AND hasAllTokens(search_text, lowerUTF8({query:String}))
-                ),
-                (SELECT count() FROM lexical_assets) AS lexical_asset_count
+                )
             SELECT moment_id, asset_id, asset_name, object_key, content_type, folder_id, thumbnail_key,
                    start, end, description, transcript,
                    1 - cosineDistance(embedding, {embedding:Array(Float32)}) AS vector_score,
-                   hasAllTokens(search_text, lowerUTF8({query:String})) AS lexical_match
+                   hasAllTokens(lowerUTF8(concat(description, ' ', transcript)), lowerUTF8({query:String})) AS lexical_match,
+                   ngramSearchCaseInsensitiveUTF8(concat(description, ' ', transcript), {query:String}) AS fuzzy_score
             FROM asset_search_moments FINAL
             WHERE project_id = {project_id:String} AND schema_version = {schema_version:UInt16}
               AND length(embedding) = {dimensions:UInt16}
               AND asset_id IN ready_assets
-              AND (lexical_asset_count = 0 OR asset_id IN lexical_assets)
-            ORDER BY vector_score + if(lexical_match, 0.08, 0) DESC
+            ORDER BY lexical_match DESC, fuzzy_score DESC, vector_score DESC
             LIMIT {candidate_limit:UInt16}
             """,
             parameters={"embedding": embedding, "query": clean_query, "project_id": project_id, "schema_version": SEARCH_SCHEMA_VERSION, "dimensions": SEARCH_VECTOR_DIMENSIONS, "candidate_limit": min(limit * 3, 54)},
@@ -183,10 +214,28 @@ async def search_assets(project_id: str, query: str, limit: int = 18) -> list[di
         rows = result.result_rows
         if not rows:
             return []
-        best_vector_score = max(float(row[11]) for row in rows)
-        minimum_score = max(0.5, best_vector_score - 0.16)
-        ranked = [row for row in rows if bool(row[12]) or float(row[11]) >= minimum_score]
-        return [{"moment_id": row[0], "asset_id": row[1], "asset_name": row[2], "object_key": row[3], "content_type": row[4], "folder_id": row[5], "thumbnail_key": row[6], "start": float(row[7]), "end": float(row[8]), "description": row[9], "transcript": row[10], "score": round(min(1, float(row[11]) + (0.08 if row[12] else 0)), 4)} for row in ranked[:limit]]
+        exact = [row for row in rows if bool(row[12])]
+        fuzzy = [row for row in rows if float(row[13]) >= 0.75]
+        if exact:
+            ranked = exact
+        elif fuzzy:
+            ranked = fuzzy
+        else:
+            best_vector_score = max(float(row[11]) for row in rows)
+            minimum_score = max(0.55, best_vector_score - 0.12)
+            ranked = [row for row in rows if float(row[11]) >= minimum_score]
+        results: list[dict[str, object]] = []
+        asset_counts: dict[str, int] = {}
+        for row in ranked:
+            asset_id = str(row[1])
+            if asset_counts.get(asset_id, 0) >= 4:
+                continue
+            asset_counts[asset_id] = asset_counts.get(asset_id, 0) + 1
+            score = float(row[11]) + (0.14 if row[12] else 0.1 * float(row[13]))
+            results.append({"moment_id": row[0], "asset_id": asset_id, "asset_name": row[2], "object_key": row[3], "content_type": row[4], "folder_id": row[5], "thumbnail_key": row[6], "start": float(row[7]), "end": float(row[8]), "description": row[9], "transcript": row[10], "score": round(min(1, score), 4)})
+            if len(results) >= limit:
+                break
+        return results
     finally:
         await client.close()
 
@@ -272,7 +321,7 @@ async def _replace_moments(*, project_id: str, asset_id: str, object_key: str, n
         rows = []
         for moment, embedding, thumbnail_key in zip(moments, embeddings, thumbnail_keys, strict=True):
             moment_id = hashlib.sha256(f"{asset_id}:{moment.start:.3f}:{moment.end:.3f}:{SEARCH_SCHEMA_VERSION}".encode()).hexdigest()
-            rows.append([project_id, asset_id, moment_id, object_key, name, content_type, folder_id, thumbnail_key, moment.start, moment.end, moment.description, moment.transcript, embedding, SEARCH_EMBEDDING_MODEL, SEARCH_ANALYSIS_MODEL, SEARCH_SCHEMA_VERSION, now])
+            rows.append([project_id, asset_id, moment_id, object_key, name, content_type, folder_id, thumbnail_key, moment.start, moment.end, moment.description, moment.transcript, embedding, SEARCH_EMBEDDING_REVISION, SEARCH_ANALYSIS_MODEL, SEARCH_SCHEMA_VERSION, now])
         await client.insert("asset_search_moments", rows, column_names=["project_id", "asset_id", "moment_id", "object_key", "asset_name", "content_type", "folder_id", "thumbnail_key", "start", "end", "description", "transcript", "embedding", "embedding_model", "analysis_model", "schema_version", "updated_at"])
     finally:
         await client.close()
