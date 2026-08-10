@@ -13,6 +13,8 @@ type UploadBody = {
 export async function POST(request: Request) {
   const context = await authenticatedBackendContext(request);
   if (!context) return Response.json({ error: "Authentication required" }, { status: 401 });
+  const origin = request.headers.get("origin");
+  if (!origin) return Response.json({ error: "Browser origin is required" }, { status: 400 });
   const body = await request.json() as UploadBody;
   if (!validUpload(body)) return Response.json({ error: "Project, asset, file name, type, and size are required" }, { status: 400 });
   return proxy("/assets/uploads", {
@@ -21,7 +23,7 @@ export async function POST(request: Request) {
     file_name: body.fileName,
     content_type: body.contentType,
     size: body.size,
-    origin: new URL(request.url).origin,
+    origin,
   }, context.headers);
 }
 

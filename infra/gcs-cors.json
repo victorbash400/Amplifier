@@ -3,7 +3,8 @@
     "origin": [
       "http://localhost:3000",
       "http://127.0.0.1:3000",
-      "https://amplifier-frontend-102052243896.africa-south1.run.app"
+      "https://amplifier-frontend-102052243896.africa-south1.run.app",
+      "https://amplifier-frontend-qn77ihloya-bq.a.run.app"
     ],
     "method": ["PUT"],
     "responseHeader": ["Content-Type", "Content-Range", "Range"],
