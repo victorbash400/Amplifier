@@ -7,9 +7,8 @@ import math
 from typing import Any, Literal
 from uuid import uuid4
 
-import aiosqlite
-
 from app.accounts import DATABASE_PATH, account_owns_project, project_asset
+from app.database import connect, lock_project
 
 
 MINIMUM_DURATION = 0.25
@@ -28,7 +27,7 @@ async def ensure_timeline_schema() -> None:
     async with _schema_lock:
         if _schema_ready:
             return
-        async with aiosqlite.connect(DATABASE_PATH) as database:
+        async with connect(DATABASE_PATH) as database:
             await database.execute("PRAGMA foreign_keys = ON")
             await database.execute("CREATE TABLE IF NOT EXISTS timelines (project_id TEXT PRIMARY KEY, account_id TEXT NOT NULL, revision INTEGER NOT NULL, document_json TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE, FOREIGN KEY (account_id) REFERENCES users(id) ON DELETE CASCADE)")
             await database.execute("CREATE TABLE IF NOT EXISTS timeline_requests (project_id TEXT NOT NULL, idempotency_key TEXT NOT NULL, response_json TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (project_id, idempotency_key), FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE)")
@@ -43,7 +42,7 @@ def empty_timeline() -> dict[str, Any]:
 async def read_timeline(account_id: str, project_id: str) -> dict[str, Any]:
     await _require_project(account_id, project_id)
     await ensure_timeline_schema()
-    async with aiosqlite.connect(DATABASE_PATH) as database:
+    async with connect(DATABASE_PATH) as database:
         cursor = await database.execute("SELECT revision, document_json FROM timelines WHERE project_id = ? AND account_id = ?", (project_id, account_id))
         row = await cursor.fetchone()
     if not row:
@@ -57,8 +56,8 @@ async def sync_timeline(account_id: str, project_id: str, expected_revision: int
     await _require_project(account_id, project_id)
     clean = await _validated_document(account_id, project_id, document)
     await ensure_timeline_schema()
-    async with aiosqlite.connect(DATABASE_PATH) as database:
-        await database.execute("BEGIN IMMEDIATE")
+    async with connect(DATABASE_PATH) as database:
+        await lock_project(database, project_id, account_id)
         cursor = await database.execute("SELECT revision, document_json FROM timelines WHERE project_id = ? AND account_id = ?", (project_id, account_id))
         row = await cursor.fetchone()
         current_revision = int(row[0]) if row else 0
@@ -86,8 +85,8 @@ async def sync_timeline(account_id: str, project_id: str, expected_revision: int
 async def apply_operation(account_id: str, project_id: str, expected_revision: int, operation: dict[str, Any], idempotency_key: str) -> dict[str, Any]:
     await _require_project(account_id, project_id)
     await ensure_timeline_schema()
-    async with aiosqlite.connect(DATABASE_PATH) as database:
-        await database.execute("BEGIN IMMEDIATE")
+    async with connect(DATABASE_PATH) as database:
+        await lock_project(database, project_id, account_id)
         cursor = await database.execute("SELECT response_json FROM timeline_requests WHERE project_id = ? AND idempotency_key = ?", (project_id, idempotency_key))
         cached = await cursor.fetchone()
         if cached:
@@ -244,10 +243,20 @@ def _apply(clips: list[dict[str, Any]], operation: dict[str, Any]) -> list[dict[
         adjustments = deepcopy(selected.get("visionAdjustments") or {})
         adjustments.update(operation.get("adjustments") or {})
         return [{**clip, "visionAdjustments": adjustments} if clip["id"] in group_ids and clip["role"] == "visual" else deepcopy(clip) for clip in clips]
+    if kind == "dub":
+        inserted = deepcopy(operation.get("clip"))
+        if not isinstance(inserted, dict) or inserted.get("role") != "audio":
+            raise ValueError("Dub audio clip is invalid")
+        muted = [{**clip, "volume": 0} if clip["id"] in group_ids and clip["role"] == "audio" else deepcopy(clip) for clip in clips]
+        return [*muted, inserted]
     if kind == "replace":
         asset_id = str(operation.get("asset_id") or "")
         source_duration = _number(operation.get("source_duration"), "source duration", minimum=MINIMUM_DURATION)
         return [{**clip, "assetId": asset_id, "sourceDuration": source_duration, "duration": min(clip["duration"], source_duration), "trimStart": min(clip["trimStart"], max(0, source_duration - MINIMUM_DURATION))} if clip["id"] in group_ids else deepcopy(clip) for clip in clips]
+    if kind == "replace_track":
+        asset_id = str(operation.get("asset_id") or "")
+        source_duration = _number(operation.get("source_duration"), "source duration", minimum=MINIMUM_DURATION)
+        return [{**clip, "assetId": asset_id, "sourceDuration": source_duration, "duration": min(clip["duration"], source_duration), "trimStart": min(clip["trimStart"], max(0, source_duration - MINIMUM_DURATION))} if clip["id"] == clip_id else deepcopy(clip) for clip in clips]
     raise ValueError("Unsupported timeline operation")
 
 
@@ -260,7 +269,7 @@ def _change(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> dict[s
 
 
 def _message(operation: dict[str, Any]) -> str:
-    return {"insert": "Inserted media on the timeline.", "insert_group": "Inserted linked media on the timeline.", "move": "Moved the selected timeline clip.", "trim": "Trimmed the selected timeline clip.", "split": "Split the selected timeline clip.", "delete": "Deleted the selected timeline clip.", "replace": "Replaced the selected media.", "volume": "Updated the selected audio level.", "vision": "Updated the selected visual settings.", "caption_track": "Updated the timeline text track.", "asl_track": "Updated the timeline sign-language track."}.get(str(operation.get("kind")), "Updated the timeline.")
+    return {"insert": "Inserted media on the timeline.", "insert_group": "Inserted linked media on the timeline.", "move": "Moved the selected timeline clip.", "trim": "Trimmed the selected timeline clip.", "split": "Split the selected timeline clip.", "delete": "Deleted the selected timeline clip.", "replace": "Replaced the selected linked media.", "replace_track": "Replaced one timeline track.", "dub": "Added translated dialogue and muted the original audio.", "volume": "Updated the selected audio level.", "vision": "Updated the selected visual settings.", "caption_track": "Updated the timeline text track.", "asl_track": "Updated the timeline sign-language track."}.get(str(operation.get("kind")), "Updated the timeline.")
 
 
 def _number(value: object, label: str, *, minimum: float | None = None, maximum: float | None = None) -> float:

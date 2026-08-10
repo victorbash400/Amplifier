@@ -1,0 +1,11 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: [pull, africa-south1-docker.pkg.dev/$PROJECT_ID/amplifier/backend:latest]
+    allowFailure: true
+  - name: gcr.io/cloud-builders/docker
+    args: [build, --cache-from, africa-south1-docker.pkg.dev/$PROJECT_ID/amplifier/backend:latest, -f, infra/Dockerfile.backend, -t, africa-south1-docker.pkg.dev/$PROJECT_ID/amplifier/backend:$BUILD_ID, -t, africa-south1-docker.pkg.dev/$PROJECT_ID/amplifier/backend:latest, .]
+images:
+  - africa-south1-docker.pkg.dev/$PROJECT_ID/amplifier/backend:$BUILD_ID
+  - africa-south1-docker.pkg.dev/$PROJECT_ID/amplifier/backend:latest
+options:
+  logging: CLOUD_LOGGING_ONLY

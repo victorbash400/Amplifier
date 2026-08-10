@@ -12,6 +12,9 @@ from pathlib import Path
 from uuid import uuid4
 
 import aiosqlite
+import asyncpg
+
+from app.database import connect
 
 DEMO_EMAIL = "demo@amplifier.local"
 DEMO_PASSWORD = "amplifier-demo"
@@ -40,7 +43,7 @@ async def create_account(email_input: str, password: str, name_input: str) -> di
     account = await new_stored_account(email, password, name)
     try:
         await write_account(account)
-    except sqlite3.IntegrityError as error:
+    except (sqlite3.IntegrityError, asyncpg.UniqueViolationError) as error:
         raise ValueError("An account with this email already exists") from error
     return public_account(account)
 
@@ -64,7 +67,7 @@ async def ensure_demo_account() -> dict[str, str]:
         try:
             await write_account(candidate)
             account = candidate
-        except sqlite3.IntegrityError:
+        except (sqlite3.IntegrityError, asyncpg.UniqueViolationError):
             account = await read_account(DEMO_EMAIL)
     if not account:
         raise RuntimeError("Could not create the demo account")
@@ -78,7 +81,7 @@ async def ensure_schema() -> None:
     async with _schema_lock:
         if _schema_ready:
             return
-        async with aiosqlite.connect(DATABASE_PATH) as database:
+        async with connect(DATABASE_PATH) as database:
             await database.execute("PRAGMA foreign_keys = ON")
             await database.execute("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, password_hash TEXT NOT NULL, salt TEXT NOT NULL, created_at TEXT NOT NULL)")
             await database.execute("CREATE TABLE IF NOT EXISTS workspaces (account_id TEXT PRIMARY KEY, workspace_json TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY (account_id) REFERENCES users(id) ON DELETE CASCADE)")
@@ -94,7 +97,7 @@ async def ensure_schema() -> None:
 
 
 async def read_account(email: str) -> StoredAccount | None:
-    async with aiosqlite.connect(DATABASE_PATH) as database:
+    async with connect(DATABASE_PATH) as database:
         database.row_factory = aiosqlite.Row
         cursor = await database.execute("SELECT id, email, name, password_hash, salt FROM users WHERE email = ?", (email,))
         row = await cursor.fetchone()
@@ -102,7 +105,7 @@ async def read_account(email: str) -> StoredAccount | None:
 
 
 async def write_account(account: StoredAccount) -> None:
-    async with aiosqlite.connect(DATABASE_PATH) as database:
+    async with connect(DATABASE_PATH) as database:
         await database.execute("INSERT INTO users (id, email, name, password_hash, salt, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))", (account.id, account.email, account.name, account.password_hash, account.salt))
         await database.commit()
 
@@ -140,7 +143,7 @@ def public_account(account: StoredAccount) -> dict[str, str]:
 
 async def load_workspace(account_id: str) -> dict[str, list[dict[str, object]]]:
     await ensure_schema()
-    async with aiosqlite.connect(DATABASE_PATH) as database:
+    async with connect(DATABASE_PATH) as database:
         cursor = await database.execute("SELECT workspace_json FROM workspaces WHERE account_id = ?", (account_id,))
         row = await cursor.fetchone()
     if not row:
@@ -153,7 +156,7 @@ async def load_workspace(account_id: str) -> dict[str, list[dict[str, object]]]:
 async def save_workspace(account_id: str, workspace: dict[str, object]) -> None:
     await ensure_schema()
     validate_workspace(workspace)
-    async with aiosqlite.connect(DATABASE_PATH) as database:
+    async with connect(DATABASE_PATH) as database:
         await database.execute("PRAGMA foreign_keys = ON")
         cursor = await database.execute("SELECT id FROM users WHERE id = ?", (account_id,))
         if not await cursor.fetchone():
@@ -168,14 +171,14 @@ async def save_workspace(account_id: str, workspace: dict[str, object]) -> None:
 
 async def account_owns_project(account_id: str, project_id: str) -> bool:
     await ensure_schema()
-    async with aiosqlite.connect(DATABASE_PATH) as database:
+    async with connect(DATABASE_PATH) as database:
         cursor = await database.execute("SELECT 1 FROM projects WHERE id = ? AND account_id = ?", (project_id, account_id))
         return bool(await cursor.fetchone())
 
 
 async def project_asset(account_id: str, project_id: str, asset_id: str) -> dict[str, object] | None:
     await ensure_schema()
-    async with aiosqlite.connect(DATABASE_PATH) as database:
+    async with connect(DATABASE_PATH) as database:
         cursor = await database.execute("SELECT asset_json FROM assets WHERE id = ? AND project_id = ? AND account_id = ?", (asset_id, project_id, account_id))
         row = await cursor.fetchone()
     return json.loads(row[0]) if row else None
@@ -183,7 +186,7 @@ async def project_asset(account_id: str, project_id: str, asset_id: str) -> dict
 
 async def project_assets(account_id: str, project_id: str) -> list[dict[str, object]]:
     await ensure_schema()
-    async with aiosqlite.connect(DATABASE_PATH) as database:
+    async with connect(DATABASE_PATH) as database:
         cursor = await database.execute("SELECT asset_json FROM assets WHERE project_id = ? AND account_id = ? ORDER BY updated_at, id", (project_id, account_id))
         rows = await cursor.fetchall()
     return [json.loads(row[0]) for row in rows]
@@ -196,7 +199,7 @@ async def register_project_asset(account_id: str, project_id: str, asset: dict[s
     if not asset_id or asset.get("projectId") != project_id:
         raise ValueError("Generated asset metadata is invalid")
     await ensure_schema()
-    async with aiosqlite.connect(DATABASE_PATH) as database:
+    async with connect(DATABASE_PATH) as database:
         await database.execute("PRAGMA foreign_keys = ON")
         cursor = await database.execute("SELECT account_id FROM assets WHERE id = ?", (asset_id,))
         owner = await cursor.fetchone()
@@ -213,7 +216,7 @@ async def register_project_asset(account_id: str, project_id: str, asset: dict[s
         await database.commit()
 
 
-async def _sync_registry(database: aiosqlite.Connection, account_id: str, workspace: dict[str, object], *, remove_missing: bool) -> None:
+async def _sync_registry(database: object, account_id: str, workspace: dict[str, object], *, remove_missing: bool) -> None:
     projects = [item for item in workspace.get("projects", []) if isinstance(item, dict) and isinstance(item.get("id"), str)]
     files = [item for item in workspace.get("files", []) if isinstance(item, dict) and isinstance(item.get("id"), str) and isinstance(item.get("projectId"), str)]
     project_ids = {str(item["id"]) for item in projects}

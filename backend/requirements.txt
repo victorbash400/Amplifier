@@ -1,7 +1,9 @@
 fastapi
 clickhouse-connect
 google-adk[db]
+google-cloud-aiplatform[agent_engines,adk]
 aiosqlite
+asyncpg
 greenlet
 google-genai
 google-cloud-speech

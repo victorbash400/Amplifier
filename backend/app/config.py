@@ -21,13 +21,23 @@ class Settings:
     google_cloud_location: str
     google_speech_location: str
     agent_model: str
+    agent_model_location: str
     gcs_bucket: str
     clickhouse_host: str
     clickhouse_user: str
     clickhouse_password: str
     clickhouse_database: str
     agent_session_database_url: str
+    app_database_url: str
+    database_pool_size: int
+    database_user: str
+    database_password: str
+    database_name: str
+    database_socket: str
     internal_secret: str
+    remote_tool_url: str
+    agent_engine_location: str
+    agent_engine_resources: dict[str, str]
 
 
 settings = Settings(
@@ -35,6 +45,7 @@ settings = Settings(
     google_cloud_location=environment("GOOGLE_CLOUD_LOCATION", "global"),
     google_speech_location=environment("GOOGLE_SPEECH_LOCATION", "us"),
     agent_model=environment("AMPLIFIER_AGENT_MODEL", "gemini-3.1-pro-preview"),
+    agent_model_location=environment("AMPLIFIER_AGENT_MODEL_LOCATION", "global"),
     gcs_bucket=environment("AMPLIFIER_GCS_BUCKET", "amplifier-20260806-assets"),
     clickhouse_host=environment("CLICKHOUSE_HOST"),
     clickhouse_user=environment("CLICKHOUSE_USER", "default"),
@@ -44,7 +55,23 @@ settings = Settings(
         "AMPLIFIER_AGENT_SESSION_DATABASE_URL",
         f"sqlite+aiosqlite:///{backend_root / 'amplifier_sessions.db'}",
     ),
+    app_database_url=environment("AMPLIFIER_DATABASE_URL"),
+    database_pool_size=int(environment("AMPLIFIER_DATABASE_POOL_SIZE", "8")),
+    database_user=environment("AMPLIFIER_DATABASE_USER", "amplifier"),
+    database_password=environment("AMPLIFIER_DATABASE_PASSWORD"),
+    database_name=environment("AMPLIFIER_DATABASE_NAME", "amplifier"),
+    database_socket=environment("AMPLIFIER_DATABASE_SOCKET"),
     internal_secret=environment("AMPLIFIER_INTERNAL_SECRET"),
+    remote_tool_url=environment("AMPLIFIER_REMOTE_TOOL_URL"),
+    agent_engine_location=environment("AMPLIFIER_AGENT_ENGINE_LOCATION", "europe-west1"),
+    agent_engine_resources={
+        key: value
+        for key, value in (
+            item.split("=", 1)
+            for item in environment("AMPLIFIER_AGENT_ENGINE_RESOURCES").split(",")
+            if "=" in item
+        )
+    },
 )
 
 os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "TRUE"
