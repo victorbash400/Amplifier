@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.accounts import account_owns_project, authenticate_account, create_account, load_workspace, project_asset, save_workspace
-from app.agent_tools import TOOL_NAMES_BY_AGENT, TOOLS_BY_AGENT
+from app.agent_tools import AgentToolError, TOOL_NAMES_BY_AGENT, TOOLS_BY_AGENT
 from app.agent_stream import branch_session, delete_agent_session, ensure_session, stream_agent_events, update_session_context
 from app.asl_tools import generate_asl_track
 from app.asset_storage import create_upload_session, delete_asset, open_asset_stream, verify_uploaded_asset
@@ -317,6 +317,8 @@ async def run_remote_agent_tool(
     function = next(tool for tool in TOOLS_BY_AGENT[body.agent_id] if tool.__name__ == tool_name)
     try:
         return await function(**body.args, tool_context=RemoteToolContext(body.state, body.function_call_id))
+    except AgentToolError as error:
+        return {"status": "failed", "code": error.code, "error": str(error), "retryable": error.retryable, "action": error.action}
     except Exception as error:
         logger.exception("Remote agent tool %s failed", tool_name)
         raise HTTPException(status_code=422, detail=str(error)) from error

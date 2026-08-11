@@ -6,7 +6,7 @@ from uuid import uuid4
 from google.adk.tools import ToolContext
 
 from app.accounts import project_asset, project_assets, register_project_asset
-from app.asl_tools import generate_asl_track
+from app.asl_tools import AslGenerationError, AslPreflightError, generate_asl_track
 from app.braille import braille_transcript
 from app.hearing_tools import reduce_background_noise
 from app.language_tools import _speaker_turns, generate_language_track
@@ -399,7 +399,12 @@ async def apply_asl(source: Literal["captions", "description"], tool_context: To
     _, clip = await _selected(tool_context)
     asset = await _asset_for_clip(tool_context, clip)
     _, project_id, _ = _state(tool_context)
-    cues = await generate_asl_track(project_id, clip["assetId"], clip["trimStart"], clip["trimStart"] + clip["duration"], source, None, asset.get("objectKey"))
+    try:
+        cues = await generate_asl_track(project_id, clip["assetId"], clip["trimStart"], clip["trimStart"] + clip["duration"], source, None, asset.get("objectKey"))
+    except AslPreflightError as error:
+        raise AgentToolError("asl_prerequisite_missing", str(error), "Do not retry or switch sources. Report the missing prerequisite.") from error
+    except AslGenerationError as error:
+        raise AgentToolError("asl_generation_stopped", str(error), "Do not retry automatically or switch sources. Tell the user that saved progress will resume on an explicit retry.") from error
     track = {"clipId": clip["id"], "cues": cues, "placement": {"x": .88, "y": .12}}
     return await _mutate(tool_context, {"kind": "asl_track", "track": track, "change": _selection_change(clip)})
 
