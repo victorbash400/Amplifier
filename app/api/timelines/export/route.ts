@@ -19,10 +19,12 @@ type ExportClip = {
   colorPreset?: string;
 };
 
+type ExportCaption = { id?: string; start?: number; end?: number; text?: string };
+
 export async function POST(request: Request) {
   const context = await authenticatedBackendContext(request);
   if (!context) return Response.json({ error: "Authentication required" }, { status: 401 });
-  const body = await request.json() as { projectId?: string; folderId?: string; name?: string; clips?: ExportClip[] };
+  const body = await request.json() as { projectId?: string; folderId?: string; name?: string; clips?: ExportClip[]; captions?: ExportCaption[] };
   if (!body.projectId || !body.name?.trim() || !body.clips?.length) return Response.json({ error: "Export name, project, and timeline clips are required" }, { status: 400 });
   const response = await fetch(`${backendUrl.replace(/\/$/, "")}/timelines/export`, {
     method: "POST",
@@ -31,6 +33,7 @@ export async function POST(request: Request) {
       project_id: body.projectId,
       folder_id: body.folderId || "root",
       name: body.name,
+      captions: body.captions,
       clips: body.clips.map((clip) => ({
         asset_id: clip.assetId,
         object_key: clip.objectKey,

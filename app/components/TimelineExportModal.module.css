@@ -46,6 +46,8 @@
 }
 
 .name input:focus { border-color: #948875; box-shadow: 0 0 0 3px #f1ede6; }
+.option { display: flex; align-items: center; margin-top: 14px; gap: 8px; color: #514d46; font-size: 12px; }
+.option input { width: 15px; height: 15px; margin: 0; accent-color: #687b6d; }
 .error { margin: 20px 0 0; color: #9b3e34; font-size: 12px; }
 
 .progress {

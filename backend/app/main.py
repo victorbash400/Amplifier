@@ -25,7 +25,7 @@ from app.language_tools import generate_language_track
 from app.media_search import asset_transcript, index_asset, index_status, pending_index_assets, queue_asset, refresh_legacy_moment_embeddings, remove_asset_index, search_assets
 from app.skills import copy_chat_skills, create_skill, delete_chat_skills, set_chat_skills, skill_context, skill_detail, skill_manifest, update_skill
 from app.sensory_tools import generate_sensory_video
-from app.timeline_renderer import RenderClip, render_timeline
+from app.timeline_renderer import RenderCaption, RenderClip, render_timeline
 from app.timeline_service import TimelineConflict, read_timeline, sync_timeline
 from app.tools.scoped_clickhouse_mcp import SCOPED_MCP_TOOL_NAMES, scoped_clickhouse_server
 from app.transcript_service import transcript_for_asset
@@ -289,11 +289,19 @@ class TimelineRenderClipRequest(BaseModel):
     color_preset: str | None = Field(default=None, pattern=r"^(red-green|blue-yellow|all-channels)$")
 
 
+class TimelineRenderCaptionRequest(BaseModel):
+    id: str = Field(min_length=1, max_length=100)
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    text: str = Field(min_length=1, max_length=2000)
+
+
 class TimelineExportRequest(BaseModel):
     project_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
     name: str = Field(min_length=1, max_length=100)
     folder_id: str = Field(default="root", min_length=1, max_length=100)
     clips: list[TimelineRenderClipRequest] = Field(min_length=1, max_length=500)
+    captions: list[TimelineRenderCaptionRequest] = Field(default_factory=list, max_length=1000)
 
 
 @app.get("/health")
@@ -674,7 +682,8 @@ async def export_timeline(body: TimelineExportRequest, account_id: Annotated[str
     file_name = clean_name if clean_name.lower().endswith(".mp4") else f"{clean_name}.mp4"
     asset_id = str(uuid4())
     try:
-        rendered = await asyncio.to_thread(render_timeline, body.project_id, asset_id, file_name, render_clips)
+        captions = [RenderCaption(start=cue.start, end=cue.end, text=cue.text) for cue in body.captions]
+        rendered = await asyncio.to_thread(render_timeline, body.project_id, asset_id, file_name, render_clips, captions)
         asset = {"id": asset_id, "projectId": body.project_id, "folderId": body.folder_id, "name": file_name, "size": rendered["size"], "type": "video/mp4", "objectKey": rendered["object_key"], "generation": rendered["generation"], "duration": rendered["duration"], "hasAudio": True, "audioProbe": "ffprobe"}
         current = await load_workspace(account_id)
         if body.folder_id != "root" and not any(isinstance(folder, dict) and folder.get("id") == body.folder_id and folder.get("projectId") == body.project_id for folder in current["folders"]):
@@ -728,7 +737,8 @@ async def create_asl_track(body: AslTrackRequest, account_id: Annotated[str, Dep
         raise HTTPException(status_code=400, detail="The selected clip range is invalid")
     try:
         attached_cues = [cue.model_dump() for cue in body.cues] if body.cues else None
-        return {"cues": await generate_asl_track(body.project_id, body.asset_id, body.start, body.end, body.source, attached_cues, body.source_object_key)}
+        source = "captions" if body.source == "transcript" else body.source
+        return {"cues": await generate_asl_track(body.project_id, body.asset_id, body.start, body.end, source, attached_cues, body.source_object_key)}
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:

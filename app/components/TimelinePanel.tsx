@@ -6,6 +6,7 @@ import { ChevronsLeft, Download, Magnet, Maximize2, MousePointer2, Pause, Play, 
 import type { ProjectFile, ProjectFolder } from "../types/workspace";
 import { useTimelineShortcuts } from "../hooks/useTimelineShortcuts";
 import { collisionFreeStart } from "../lib/timelineLayout";
+import { timelineExportCaptions } from "../lib/timelineExportCaptions";
 import { assetUrl, readMediaDuration } from "../lib/assetUploads";
 import { deleteTimelineClip, moveTimelineClip, snapTimelineTime, splitTimelineClip, trimTimelineClip } from "../lib/timelineOperations";
 import { TimelineClipItem, type TimelineClipHandlers } from "./TimelineClipItem";
@@ -162,12 +163,13 @@ export function TimelinePanel({ agentCommitToken = 0, agentMode, agentSelection,
     onTimeChange(start);
   }
 
-  async function exportTimeline(name: string, folderId: string) {
+  async function exportTimeline(name: string, folderId: string, includeCaptions: boolean) {
     setExporting(true);
     setExportError(undefined);
     try {
       if (clips.some((clip) => !clip.asset.objectKey)) throw new Error("Every timeline clip must be uploaded before export");
-      const response = await fetch("/api/timelines/export", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: clips[0].asset.projectId, folderId, name, clips: clips.map((clip) => ({ assetId: clip.asset.id, objectKey: clip.asset.objectKey, name: clip.asset.name, contentType: clip.asset.type, start: clip.start, duration: clip.duration, sourceDuration: clip.sourceDuration, trimStart: clip.trimStart, lane: clip.lane, role: clip.role, volume: clip.volume ?? 1, contrast: clip.visionAdjustments?.contrast ?? 1, colorPreset: clip.visionAdjustments?.colorPreset })) }) });
+      const captions = timelineExportCaptions(captionTrack, clips, includeCaptions);
+      const response = await fetch("/api/timelines/export", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: clips[0].asset.projectId, folderId, name, captions, clips: clips.map((clip) => ({ assetId: clip.asset.id, objectKey: clip.asset.objectKey, name: clip.asset.name, contentType: clip.asset.type, start: clip.start, duration: clip.duration, sourceDuration: clip.sourceDuration, trimStart: clip.trimStart, lane: clip.lane, role: clip.role, volume: clip.volume ?? 1, contrast: clip.visionAdjustments?.contrast ?? 1, colorPreset: clip.visionAdjustments?.colorPreset })) }) });
       const body = await response.json() as { asset?: ProjectFile; error?: string };
       if (!response.ok || !body.asset) throw new Error(body.error || "Timeline export failed");
       onFilesChange([...files, body.asset]);
@@ -429,7 +431,7 @@ export function TimelinePanel({ agentCommitToken = 0, agentMode, agentSelection,
         onAslChange(undefined);
         return;
       }
-      const attachedCaptions = source === "captions" && captionTrack?.clipId === visual.id && captionTrack.kind === "captions" ? captionTrack.cues : undefined;
+      const attachedCaptions = source === "transcript" && captionTrack?.clipId === visual.id && captionTrack.kind === "captions" ? captionTrack.cues : undefined;
       const sourceAssetId = visual.asset.accessibilitySourceId ?? visual.asset.id;
       const sourceAsset = files.find((file) => file.id === sourceAssetId) ?? visual.asset;
       const response = await fetch("/api/hearing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, source, cues: attachedCaptions, projectId: visual.asset.projectId, assetId: sourceAssetId, sourceObjectKey: sourceAsset.objectKey, start: visual.trimStart, end: visual.trimStart + visual.duration }) });
@@ -566,7 +568,7 @@ export function TimelinePanel({ agentCommitToken = 0, agentMode, agentSelection,
         <TimelineHorizontalScrollbar scale={scale} viewportRef={viewportRef} />
       </section>
       <TimelineModeSwitcher onChange={setMode} selected={activeMode} />
-      {exportOpen && <TimelineExportModal busy={exporting} error={exportError} folders={folders} initialName="Untitled timeline" onCancel={() => setExportOpen(false)} onSave={(name, folderId) => void exportTimeline(name, folderId)} />}
+      {exportOpen && <TimelineExportModal busy={exporting} captionsAvailable={captionTrack?.kind === "captions"} error={exportError} folders={folders} initialName="Untitled timeline" onCancel={() => setExportOpen(false)} onSave={(name, folderId, includeCaptions) => void exportTimeline(name, folderId, includeCaptions)} />}
     </section>
   );
 }

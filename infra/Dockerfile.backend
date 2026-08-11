@@ -7,6 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update \
     && apt-get install --no-install-recommends -y ffmpeg liblouis-bin ca-certificates \
     && ffmpeg -version \
+    && ffmpeg -hide_banner -filters 2>&1 | grep -Eq ' subtitles +V->V' \
     && ffprobe -version \
     && lou_translate --version \
     && printf 'Accessibility is a right.\n' | lou_translate unicode.dis,en-ueb-g2.ctb >/dev/null \

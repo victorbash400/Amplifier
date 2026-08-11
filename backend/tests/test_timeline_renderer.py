@@ -4,7 +4,14 @@ import subprocess
 import tempfile
 import unittest
 
-from app.timeline_renderer import RenderClip, _ffmpeg_command
+from app.timeline_renderer import RenderCaption, RenderClip, _ffmpeg_command, _write_subtitles
+
+
+def _ffmpeg_has_subtitles() -> bool:
+    if not shutil.which("ffmpeg"):
+        return False
+    result = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True, check=False)
+    return " subtitles " in result.stdout
 
 
 class TimelineRendererTests(unittest.TestCase):
@@ -42,6 +49,22 @@ class TimelineRendererTests(unittest.TestCase):
         self.assertIn("[0:v]", filters)
         self.assertIn("[0:a]", filters)
 
+    def test_writes_timeline_captions_and_attaches_subtitle_filter(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subtitles = _write_subtitles(root, [RenderCaption(.25, 1.5, "Water {boils}\nnow")], 2)
+            self.assertIsNotNone(subtitles)
+            assert subtitles is not None
+            contents = subtitles.read_text()
+            self.assertIn("0:00:00.25,0:00:01.50", contents)
+            self.assertIn(r"Water \{boils\}\Nnow", contents)
+            clip = RenderClip("video", "shot.mp4", "video/mp4", 0, 2, 0, 0, "visual")
+            command = _ffmpeg_command([clip], [Path("shot.mp4")], [False], Path("render.mp4"), 2, subtitles=subtitles)
+            filters = command[command.index("-filter_complex") + 1]
+            self.assertIn("subtitles=", filters)
+            self.assertIn("[captioned]", filters)
+            self.assertEqual(command[command.index("-map") + 1], "[captioned]")
+
     @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg is not installed")
     def test_ffmpeg_renders_a_playable_master(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -54,6 +77,19 @@ class TimelineRendererTests(unittest.TestCase):
             subprocess.run(command, capture_output=True, text=True, timeout=30, check=True)
             probe = subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(output)], text=True)
         self.assertEqual(probe.strip().splitlines(), ["video", "audio"])
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and _ffmpeg_has_subtitles(), "FFmpeg subtitles filter is not installed")
+    def test_ffmpeg_burns_caption_track(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.mp4"
+            output = root / "output.mp4"
+            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=320x180:d=1", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-shortest", "-t", "1", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-y", str(source)], check=True)
+            subtitles = _write_subtitles(root, [RenderCaption(.1, .9, "Accessible media")], 1)
+            clip = RenderClip("video", "source.mp4", "video/mp4", 0, 1, 0, 0, "visual")
+            command = _ffmpeg_command([clip], [source], [True], output, 1, subtitles=subtitles)
+            subprocess.run(command, capture_output=True, text=True, timeout=30, check=True)
+            self.assertGreater(output.stat().st_size, 0)
 
 
 if __name__ == "__main__":
