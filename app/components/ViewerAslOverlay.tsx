@@ -5,6 +5,7 @@ import type { AslCue, AslPlacement } from "./timelineTypes";
 import styles from "./ViewerAslOverlay.module.css";
 
 const cwasaBase = "https://vhg.cmp.uea.ac.uk/tech/jas/vhg2026";
+const signerLoadTimeout = 15_000;
 const cwasaConsoleFilter = `if (!window.__amplifierCwasaConsoleFilter) {
   window.__amplifierCwasaConsoleFilter = true;
   const originalError = console.error.bind(console);
@@ -29,15 +30,27 @@ export function ViewerAslOverlay({ cues, currentTime, onPlacementChange, placeme
   const lastCue = useRef<string | undefined>(undefined);
   const dragOffset = useRef<{ x: number; y: number } | undefined>(undefined);
   const signing = useRef(false);
+  const loadTimer = useRef<number | undefined>(undefined);
   const [ready, setReady] = useState(false);
+  const [loadError, setLoadError] = useState<string>();
 
   function initialize() {
     const cwasa = window.CWASA;
-    if (!cwasa) return;
-    cwasa.addHook("avatarready", () => setReady(true), 0);
+    if (!cwasa) {
+      setLoadError("Signer could not load");
+      return;
+    }
+    window.clearTimeout(loadTimer.current);
+    setLoadError(undefined);
+    cwasa.addHook("avatarready", () => { window.clearTimeout(loadTimer.current); setReady(true); }, 0);
     cwasa.addHook("animactive", () => { signing.current = true; }, 0);
     cwasa.addHook("animidle", () => { signing.current = false; }, 0);
-    cwasa.init({ useClientConfig: true, avSettings: { width: 768, height: 640, initAv: "anna", initCamera: [0, .32, 2.85, 2, 18, 30, -1, -1], initSpeed: 0, rateSpeed: 5 } });
+    try {
+      cwasa.init({ jasBase: `${cwasaBase}/`, useClientConfig: false, avSettings: { width: 768, height: 640, initAv: "anna", initCamera: [0, .32, 2.85, 2, 18, 30, -1, -1], initSpeed: 0, rateSpeed: 5 } });
+      loadTimer.current = window.setTimeout(() => setLoadError("Signer could not load"), signerLoadTimeout);
+    } catch {
+      setLoadError("Signer could not load");
+    }
   }
 
   useEffect(() => {
@@ -55,7 +68,7 @@ export function ViewerAslOverlay({ cues, currentTime, onPlacementChange, placeme
     cwasa.playSiGMLText(activeCue.sigml, 0);
   }, [activeCue, playing, ready]);
 
-  useEffect(() => () => { if (signing.current) window.CWASA?.stopSiGML(0); }, []);
+  useEffect(() => () => { window.clearTimeout(loadTimer.current); if (signing.current) window.CWASA?.stopSiGML(0); }, []);
 
   function beginDrag(event: PointerEvent<HTMLElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -88,7 +101,7 @@ export function ViewerAslOverlay({ cues, currentTime, onPlacementChange, placeme
   }
 
   const position = { left: `${placement.x * 100}%`, top: `${placement.y * 100}%`, transform: `translate(${-placement.x * 100}%, ${-placement.y * 100}%)` };
-  return <aside aria-label="Moveable ASL interpreter" className={styles.overlay} onKeyDown={moveWithKeys} onPointerCancel={endDrag} onPointerDown={beginDrag} onPointerMove={move} onPointerUp={endDrag} style={position} tabIndex={0}><link href={`${cwasaBase}/cwa/cwasa.css`} rel="stylesheet" /><Script id="cwasa-console-filter" strategy="afterInteractive">{cwasaConsoleFilter}</Script><Script onReady={initialize} src={`${cwasaBase}/cwa/allcsa.js`} strategy="afterInteractive" /><div className="CWASAAvatar av0" />{!ready && <span className={styles.loading}>Loading signer</span>}</aside>;
+  return <aside aria-label="Moveable ASL interpreter" className={styles.overlay} onKeyDown={moveWithKeys} onPointerCancel={endDrag} onPointerDown={beginDrag} onPointerMove={move} onPointerUp={endDrag} style={position} tabIndex={0}><link href={`${cwasaBase}/cwa/cwasa.css`} rel="stylesheet" /><Script id="cwasa-console-filter" strategy="afterInteractive">{cwasaConsoleFilter}</Script><Script onError={() => setLoadError("Signer could not load")} onReady={initialize} src={`${cwasaBase}/cwa/allcsa.js`} strategy="afterInteractive" /><div className="CWASAAvatar av0" />{!ready && <span className={styles.loading}>{loadError || "Loading signer"}</span>}</aside>;
 }
 
 function clamp(value: number) { return Math.max(0, Math.min(1, value)); }

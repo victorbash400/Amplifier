@@ -429,10 +429,10 @@ export function TimelinePanel({ agentCommitToken = 0, agentMode, agentSelection,
         onAslChange(undefined);
         return;
       }
-      const attachedTranscript = source === "transcript" && captionTrack?.clipId === visual.id && captionTrack.kind === "transcript" ? captionTrack.cues : undefined;
+      const attachedCaptions = source === "captions" && captionTrack?.clipId === visual.id && captionTrack.kind === "captions" ? captionTrack.cues : undefined;
       const sourceAssetId = visual.asset.accessibilitySourceId ?? visual.asset.id;
       const sourceAsset = files.find((file) => file.id === sourceAssetId) ?? visual.asset;
-      const response = await fetch("/api/hearing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, source, cues: attachedTranscript, projectId: visual.asset.projectId, assetId: sourceAssetId, sourceObjectKey: sourceAsset.objectKey, start: visual.trimStart, end: visual.trimStart + visual.duration }) });
+      const response = await fetch("/api/hearing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, source, cues: attachedCaptions, projectId: visual.asset.projectId, assetId: sourceAssetId, sourceObjectKey: sourceAsset.objectKey, start: visual.trimStart, end: visual.trimStart + visual.duration }) });
       const body = await response.json() as { cues?: TimelineAslTrack["cues"]; error?: string };
       if (!response.ok || !body.cues?.length) throw new Error(body.error || "Could not generate ASL interpretation");
       onAslChange({ clipId: visual.id, cues: body.cues, placement: { x: .88, y: .12 } });

@@ -394,8 +394,8 @@ async def apply_captions(tool_context: ToolContext) -> dict[str, Any]:
     return await _mutate(tool_context, {"kind": "caption_track", "track": track, "change": _selection_change(clip)})
 
 
-async def apply_asl(source: Literal["transcript", "description"], tool_context: ToolContext) -> dict[str, Any]:
-    """Create an ASL cue track directly from the selected media's transcript or video description."""
+async def apply_asl(source: Literal["captions", "description"], tool_context: ToolContext) -> dict[str, Any]:
+    """Create an ASL cue track from caption text or the indexed video description without attaching captions."""
     _, clip = await _selected(tool_context)
     asset = await _asset_for_clip(tool_context, clip)
     _, project_id, _ = _state(tool_context)

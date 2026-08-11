@@ -15,7 +15,7 @@ from app.media_search import SEARCH_SCHEMA_VERSION
 from app.transcript_service import transcript_for_asset
 
 
-ASL_MODEL = "gemini-3.1-pro-preview"
+ASL_MODEL = "gemini-3-flash-preview"
 ASL_SCHEMA_VERSION = 2
 
 
@@ -32,17 +32,17 @@ class AslPlan(BaseModel):
 
 
 async def generate_asl_track(project_id: str, asset_id: str, start: float, end: float, source: str, attached_cues: list[dict[str, object]] | None = None, source_object_key: str | None = None) -> list[dict[str, object]]:
-    if source == "transcript":
+    if source == "captions":
         indexed = attached_cues or await transcript_for_asset(project_id, asset_id, source_object_key)
         evidence_cues = [cue for cue in indexed if float(cue["end"]) > start and float(cue["start"]) < end]
         if not evidence_cues:
-            raise ValueError("This clip has no attached or indexed transcript")
+            raise ValueError("This clip has no caption text")
     elif source == "description":
         evidence_cues = await _description_cues(project_id, asset_id, start, end)
         if not evidence_cues:
             raise ValueError("This clip has no indexed video descriptions")
     else:
-        raise ValueError("Choose transcript or video description for ASL")
+        raise ValueError("Choose captions or video description for ASL")
     evidence = "\n".join(f"{cue['id']} | {cue['start']:.2f}-{cue['end']:.2f} | {cue['text']}" for cue in evidence_cues)
     blob = _cache_blob(project_id, asset_id, f"{source}\n{evidence}")
     if await asyncio.to_thread(blob.exists):
