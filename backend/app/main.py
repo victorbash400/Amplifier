@@ -780,7 +780,7 @@ async def agent_chat(body: ChatRequest, account_id: Annotated[str, Depends(authe
         user_id=body.user_id,
         session_id=body.session_id,
         agent_id=body.agent_id,
-        state={"account_id": account_id, "project_id": body.project_id, "selected_clip_ids": body.selected_clip_ids, "playhead": body.playhead, "timeline_revision": timeline["revision"], "timeline_shot": {key: value for key, value in timeline_shot.items() if key != "image"} if timeline_shot else None, "attached_skills": [asdict(skill) for skill in skill_documents], "skill_allowed_tool_names": skills["allowed_tool_names"]},
+        state={"account_id": account_id, "project_id": body.project_id, "selected_clip_ids": body.selected_clip_ids, "playhead": body.playhead, "timeline_revision": timeline["revision"], "timeline_shot": {key: value for key, value in timeline_shot.items() if key != "image"} if timeline_shot else None, "attached_skills": [asdict(skill) for skill in skill_documents]},
     )
     return StreamingResponse(
         stream_agent_events(

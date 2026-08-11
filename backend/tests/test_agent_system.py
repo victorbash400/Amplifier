@@ -213,10 +213,10 @@ class AgentSystemTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(apps["vision"].root_agent.mode, "chat")
         self.assertEqual(apps["vision"].root_agent.sub_agents, [])
 
-        edit_context = SimpleNamespace(agent_name="edit_agent", state={"account_id": self.account["id"], "project_id": self.project_id, "skill_allowed_tool_names": []})
+        edit_context = SimpleNamespace(agent_name="edit_agent", state={"account_id": self.account["id"], "project_id": self.project_id})
         self.assertIsNone(await authorize_tool_call(SimpleNamespace(name="vision_agent"), {}, edit_context))
 
-        specialist_context = SimpleNamespace(agent_name="vision_agent", state={"active_agent_id": "edit", "account_id": self.account["id"], "project_id": self.project_id, "skill_allowed_tool_names": []})
+        specialist_context = SimpleNamespace(agent_name="vision_agent", state={"active_agent_id": "edit", "account_id": self.account["id"], "project_id": self.project_id})
         self.assertIsNone(await authorize_tool_call(SimpleNamespace(name="finish_task"), {}, specialist_context))
         denied = await authorize_tool_call(SimpleNamespace(name="move_clip"), {}, specialist_context)
         self.assertEqual(denied["code"], "tool_not_allowed")
@@ -284,7 +284,7 @@ class AgentSystemTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(streamed[3]["surface"], "timeline")
         self.assertNotIn("finish_task", [item.get("name") for item in streamed])
 
-    async def test_skills_are_account_scoped_attached_and_runtime_enforced(self) -> None:
+    async def test_skills_are_account_scoped_attached_and_instructional_only(self) -> None:
         initial = await skill_context(self.account["id"], self.project_id, "chat-a")
         bundled_ids = {skill["id"] for skill in initial["available_skills"] if not skill["editable"]}
         self.assertIn("clickhouse-media-discovery", bundled_ids)
@@ -293,17 +293,13 @@ class AgentSystemTests(unittest.IsolatedAsyncioTestCase):
         custom = await create_skill(self.account["id"], "# Precise cuts\n\nKeep cuts on sentence boundaries.")
         selected = await set_chat_skills(self.account["id"], self.project_id, "chat-a", ["timeline-editing", custom["id"]])
         self.assertEqual(selected["selected_skill_ids"], ["timeline-editing", custom["id"]])
-        self.assertIn("move_clip", selected["allowed_tool_names"])
-        self.assertNotIn("apply_captions", selected["allowed_tool_names"])
+        self.assertNotIn("allowed_tool_names", selected)
 
-        context = SimpleNamespace(agent_name="edit_agent", state={"active_agent_id": "edit", "account_id": self.account["id"], "project_id": self.project_id, "attached_skills": [item.__dict__ for item in selected["selected_skill_documents"]], "skill_allowed_tool_names": selected["allowed_tool_names"]})
+        context = SimpleNamespace(agent_name="edit_agent", state={"active_agent_id": "edit", "account_id": self.account["id"], "project_id": self.project_id, "attached_skills": [item.__dict__ for item in selected["selected_skill_documents"]]})
         skill_result = await read_attached_skill(custom["id"], context)
         self.assertIn("sentence boundaries", skill_result["instructions"])
-        allowed = await authorize_tool_call(SimpleNamespace(name="move_clip"), {}, context)
-        self.assertIsNone(allowed)
-        context.state["skill_allowed_tool_names"] = ["read_timeline_shot", "search_media"]
-        blocked = await authorize_tool_call(SimpleNamespace(name="insert_asset"), {}, context)
-        self.assertEqual(blocked["code"], "skill_tool_not_allowed")
+        self.assertIsNone(await authorize_tool_call(SimpleNamespace(name="move_clip"), {}, context))
+        self.assertIsNone(await authorize_tool_call(SimpleNamespace(name="insert_asset"), {}, context))
 
         with self.assertRaises(LookupError):
             await skill_detail(self.other["id"], custom["id"])
