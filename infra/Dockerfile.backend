@@ -9,6 +9,8 @@ RUN apt-get update \
     && ffmpeg -version \
     && ffprobe -version \
     && lou_translate --version \
+    && printf 'Accessibility is a right.\n' | lou_translate unicode.dis,en-ueb-g2.ctb >/dev/null \
+    && printf 'Accessibility is a right.\n' | lou_translate en-us-brf.dis,en-ueb-g2.ctb >/dev/null \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /srv

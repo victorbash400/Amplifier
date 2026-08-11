@@ -32,7 +32,7 @@ def _translate(lines: list[str], display_table: str) -> list[str]:
     if not executable:
         raise RuntimeError("Braille translation requires Liblouis (lou_translate)")
     result = subprocess.run(
-        [executable, "-d", display_table, TRANSLATION_TABLE],
+        [executable, f"{display_table},{TRANSLATION_TABLE}"],
         input="\n".join(lines) + "\n",
         capture_output=True,
         check=False,
