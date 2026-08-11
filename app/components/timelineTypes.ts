@@ -23,7 +23,7 @@ export type TimelineCaptionTrack = { clipId: string; cues: CaptionCue[]; large: 
 export type AslCue = { id: string; start: number; end: number; gloss: string; sigml: string };
 export type AslPlacement = { x: number; y: number };
 export type TimelineAslTrack = { clipId: string; cues: AslCue[]; placement: AslPlacement };
-export type TimelineAudioPreview = { id: string; asset: ProjectFile; sourceTime: number; volume: number };
+export type TimelineAudioPreview = { id: string; asset: ProjectFile; start: number; duration: number; trimStart: number; volume: number };
 
 export type TimelinePreviewState = {
   asset?: ProjectFile;
