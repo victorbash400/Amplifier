@@ -1,7 +1,7 @@
 "use client";
 
 import { PanelLeft } from "lucide-react";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import { createCreatorChat, loadCreatorChats, saveCreatorChats } from "../lib/creatorChatStorage";
 import { applyCreatorEvent, finishReasoning } from "../lib/creatorMessages";
 import { streamCreatorMessage } from "../lib/creatorStream";
@@ -50,6 +50,7 @@ export const CreatorPanel = forwardRef<CreatorPanelHandle, CreatorPanelProps>(fu
   const [changingChat, setChangingChat] = useState(false);
   const [timelineShot, setTimelineShot] = useState<TimelineShot>();
   const [shotFlight, setShotFlight] = useState<{ destination: ShotRect; image: string; source: ShotRect }>();
+  const [pendingShotFlight, setPendingShotFlight] = useState<{ id: string; image: string; source: ShotRect }>();
   const [mcpOpen, setMcpOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
   const [skillsContext, setSkillsContext] = useState<ChatSkillsContext>();
@@ -96,6 +97,14 @@ export const CreatorPanel = forwardRef<CreatorPanelHandle, CreatorPanelProps>(fu
     });
     return () => window.cancelAnimationFrame(frame);
   }, [chats, loaded, projectId]);
+
+  useLayoutEffect(() => {
+    if (!pendingShotFlight) return;
+    const destinationElement = document.querySelector<HTMLElement>(`[data-timeline-shot-id="${CSS.escape(pendingShotFlight.id)}"]`);
+    if (!destinationElement) return;
+    setShotFlight({ destination: rect(destinationElement.getBoundingClientRect()), image: pendingShotFlight.image, source: pendingShotFlight.source });
+    setPendingShotFlight(undefined);
+  }, [chats, pendingShotFlight, timelineShot]);
 
   useEffect(() => {
     if (!activeChatId) {
@@ -278,10 +287,7 @@ export const CreatorPanel = forwardRef<CreatorPanelHandle, CreatorPanelProps>(fu
     if (!shot || !sourceElement) return;
     const source = rect(sourceElement.getBoundingClientRect());
     updateMessages(chatId, (messages) => messages.map((message, index) => index === messages.length - 1 && message.role === "assistant" ? { ...message, blocks: [...message.blocks, { id: crypto.randomUUID(), kind: "timeline-shot" as const, shot }] } : message));
-    requestAnimationFrame(() => {
-      const destinationElement = document.querySelector<HTMLElement>(`[data-timeline-shot-id="${CSS.escape(shot.id)}"]`);
-      if (destinationElement) setShotFlight({ destination: rect(destinationElement.getBoundingClientRect()), image: shot.image, source });
-    });
+    setPendingShotFlight({ id: shot.id, image: shot.image, source });
   }
 
   async function captureShot() {
@@ -291,10 +297,7 @@ export const CreatorPanel = forwardRef<CreatorPanelHandle, CreatorPanelProps>(fu
       const source = rect(sourceElement.getBoundingClientRect());
       const shot = await captureTimelineShot(projectId, timeline, files, playhead, selectedClipIds);
       setTimelineShot(shot);
-      requestAnimationFrame(() => {
-        const destinationElement = document.querySelector<HTMLElement>("[data-timeline-shot-card]");
-        if (destinationElement) setShotFlight({ destination: rect(destinationElement.getBoundingClientRect()), image: shot.image, source });
-      });
+      setPendingShotFlight({ id: shot.id, image: shot.image, source });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not capture the timeline");
     }
