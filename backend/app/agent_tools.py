@@ -9,7 +9,7 @@ from app.accounts import project_asset, project_assets, register_project_asset
 from app.asl_tools import AslGenerationError, AslPreflightError, generate_asl_track
 from app.braille import braille_transcript
 from app.hearing_tools import reduce_background_noise
-from app.language_tools import _speaker_turns, generate_language_track
+from app.language_tools import LanguageGenerationError, LanguagePreflightError, _speaker_turns, generate_language_track
 from app.media_search import asset_transcript, search_assets
 from app.sensory_tools import generate_sensory_video
 from app.timeline_service import TimelineConflict, apply_operation, read_timeline as load_timeline
@@ -517,7 +517,12 @@ async def _translate(action: str, language: str, tool_context: ToolContext) -> d
     asset = await _asset_for_clip(tool_context, clip)
     account_id, project_id, _ = _state(tool_context)
     generated_id = str(uuid4())
-    output = await generate_language_track(project_id=project_id, asset_id=generated_id, source_asset_id=clip["assetId"], source_object_key=str(asset.get("objectKey") or ""), source_generation=str(asset.get("generation") or ""), source_duration=asset.get("duration"), source_name=str(asset.get("name") or "media"), folder_id=str(asset.get("folderId") or "root"), action=action, language=language, start=clip["trimStart"], end=clip["trimStart"] + clip["duration"])
+    try:
+        output = await generate_language_track(project_id=project_id, asset_id=generated_id, source_asset_id=clip["assetId"], source_object_key=str(asset.get("objectKey") or ""), source_generation=str(asset.get("generation") or ""), source_duration=asset.get("duration"), source_name=str(asset.get("name") or "media"), folder_id=str(asset.get("folderId") or "root"), action=action, language=language, start=clip["trimStart"], end=clip["trimStart"] + clip["duration"])
+    except LanguagePreflightError as error:
+        raise AgentToolError("language_prerequisite_missing", str(error), "Do not retry or change the request. Report the missing or stale prerequisite.") from error
+    except LanguageGenerationError as error:
+        raise AgentToolError("language_generation_stopped", str(error), "Do not retry automatically. Report the failed language stage; validated speaker profiles remain cached for an explicit retry.") from error
     if action == "captions":
         track = {"clipId": clip["id"], "cues": output["cues"], "large": False, "kind": "captions", "language": language}
         return await _mutate(tool_context, {"kind": "caption_track", "track": track, "change": _selection_change(clip)})

@@ -17,7 +17,7 @@ from google.api_core.retry import Retry, if_transient_error
 from google.cloud import speech_v2, storage, texttospeech, translate_v3
 from google.cloud.speech_v2.types import cloud_speech
 from google.genai import types
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.config import settings
 from app.clickhouse import clickhouse_client
@@ -44,20 +44,28 @@ class SpeakerTurn:
     voice_presentation: Literal["masculine", "feminine", "neutral"] = "neutral"
 
 
-class VoiceProfile(BaseModel):
-    speaker: int = Field(ge=1)
+class VoicePresentation(BaseModel):
     presentation: Literal["masculine", "feminine", "neutral"]
 
 
-class VoiceProfilePlan(BaseModel):
-    profiles: list[VoiceProfile]
+class LanguagePreflightError(ValueError):
+    pass
+
+
+class LanguageGenerationError(RuntimeError):
+    pass
 
 
 async def generate_language_track(*, project_id: str, asset_id: str, source_asset_id: str, source_object_key: str, source_generation: str, source_duration: float | None, source_name: str, folder_id: str, action: str, language: str, start: float, end: float) -> dict[str, object]:
     if language not in LANGUAGES:
-        raise ValueError("Unsupported target language")
+        raise LanguagePreflightError("Unsupported target language")
+    if action not in {"captions", "audio", "descriptions"}:
+        raise LanguagePreflightError("Unsupported language action")
+    if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end <= start:
+        raise LanguagePreflightError("The selected clip range is invalid")
     if not source_object_key.startswith(f"projects/{project_id}/assets/{source_asset_id}/"):
-        raise ValueError("The selected media does not belong to this project")
+        raise LanguagePreflightError("The selected media does not belong to this project")
+    await _preflight_source(project_id, source_object_key, source_generation, source_duration, end)
     cache_action = "descriptions" if action == "descriptions" else "dialogue-voices-v1"
     cached = await _cached_plan(project_id, source_asset_id, source_generation, cache_action, language, start, end)
     if cached:
@@ -71,23 +79,38 @@ async def generate_language_track(*, project_id: str, asset_id: str, source_asse
     else:
         turns = [turn for turn in await _speaker_turns(project_id, source_asset_id, source_object_key, source_generation, source_duration) if turn.end > start and turn.start < end]
     if not turns:
-        raise ValueError("No speech was found in the selected clip")
+        raise LanguagePreflightError("No speech was found in the selected clip")
+    turns = _preflight_turns(turns, source_duration)
     if not cached:
-        translated = await _translate_turns(turns, language)
-        await _save_plan(project_id, source_asset_id, source_object_key, source_generation, cache_action, language, start, end, turns, translated)
+        try:
+            translated = await _translate_turns(turns, language)
+            await _save_plan(project_id, source_asset_id, source_object_key, source_generation, cache_action, language, start, end, turns, translated)
+        except LanguageGenerationError:
+            raise
+        except Exception as error:
+            raise LanguageGenerationError("Language translation stopped before audio generation") from error
     cues = [{"id": _cue_id(source_asset_id, language, turn), "start": turn.start, "end": turn.end, "text": text, "speaker": turn.speaker, "voicePresentation": turn.voice_presentation} for turn, text in zip(turns, translated, strict=True)]
     if action == "captions":
         return {"cues": cues, "language": language, "speakers": len({turn.speaker for turn in turns})}
-    pieces = await _synthesize_turns(turns, translated, language)
+    try:
+        pieces = await _synthesize_turns(turns, translated, language)
+    except Exception as error:
+        raise LanguageGenerationError("Translated speech synthesis stopped; translation and speaker profiles were saved") from error
     timed = [NarrationCue(start=turn.start, end=turn.end, text=text) for turn, text in zip(turns, translated, strict=True)]
-    audio = await asyncio.to_thread(_compose_timed_audio, timed, pieces, start, end - start)
+    try:
+        audio = await asyncio.to_thread(_compose_timed_audio, timed, pieces, start, end - start)
+    except Exception as error:
+        raise LanguageGenerationError("Translated speech could not be composed on the source timing") from error
     label = LANGUAGES[language][0]
     name = f"{Path(source_name).stem} - {label} {'descriptions' if action == 'descriptions' else 'audio'}.mp3"
     object_key = f"projects/{project_id}/assets/{asset_id}/{name}"
     blob = storage.Client(project=settings.google_cloud_project).bucket(settings.gcs_bucket).blob(object_key)
     blob.metadata = {"project_id": project_id, "asset_id": asset_id, "source_asset_id": source_asset_id, "language": language, "language_action": action, "speaker_count": str(len({turn.speaker for turn in turns}))}
-    await asyncio.to_thread(blob.upload_from_string, audio, content_type="audio/mpeg")
-    await asyncio.to_thread(blob.reload)
+    try:
+        await asyncio.to_thread(blob.upload_from_string, audio, content_type="audio/mpeg")
+        await asyncio.to_thread(blob.reload)
+    except Exception as error:
+        raise LanguageGenerationError("Translated audio could not be saved") from error
     return {"asset": {"id": asset_id, "projectId": project_id, "folderId": folder_id, "name": name, "size": int(blob.size or len(audio)), "type": "audio/mpeg", "objectKey": object_key, "generation": str(blob.generation or ""), "duration": _audio_duration(audio), "accessibilitySourceId": source_asset_id}, "cues": cues, "language": language, "speakers": len({turn.speaker for turn in turns})}
 
 
@@ -96,52 +119,114 @@ async def _speaker_turns(project_id: str, asset_id: str, object_key: str, genera
     bucket = storage.Client(project=settings.google_cloud_project).bucket(settings.gcs_bucket)
     cache = bucket.blob(f"projects/{project_id}/accessibility/speakers/v4/{asset_id}-{cache_key}.json")
     if await asyncio.to_thread(cache.exists):
-        turns = [SpeakerTurn(**item) for item in json.loads(await asyncio.to_thread(cache.download_as_text))]
+        try:
+            turns = [SpeakerTurn(**item) for item in json.loads(await asyncio.to_thread(cache.download_as_text))]
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            raise LanguagePreflightError("The saved speaker diarization is invalid") from error
     else:
         audio_key = await asyncio.to_thread(_normalized_audio, bucket, project_id, asset_id, object_key, cache_key)
         turns = await asyncio.to_thread(_diarize, audio_key, duration)
         if turns:
+            turns = _bounded_turns(turns, duration)
+            turns = _canonicalize_speakers(turns)
+            turns = _preflight_turns(turns, duration)
             await asyncio.to_thread(cache.upload_from_string, json.dumps([turn.__dict__ for turn in turns], separators=(",", ":")), content_type="application/json")
     if not turns:
         return []
-    profiles_cache = bucket.blob(f"projects/{project_id}/accessibility/speakers/voices/v1/{asset_id}-{cache_key}.json")
-    if await asyncio.to_thread(profiles_cache.exists):
-        profiles = {int(speaker): presentation for speaker, presentation in json.loads(await asyncio.to_thread(profiles_cache.download_as_text)).items()}
-    else:
-        audio_key = await asyncio.to_thread(_normalized_audio, bucket, project_id, asset_id, object_key, cache_key)
-        profiles = await _voice_profiles(audio_key, turns)
-        await asyncio.to_thread(profiles_cache.upload_from_string, json.dumps(profiles, separators=(",", ":")), content_type="application/json")
+    turns = _bounded_turns(turns, duration)
+    turns = _canonicalize_speakers(turns)
+    turns = _preflight_turns(turns, duration)
+    audio_key = await asyncio.to_thread(_normalized_audio, bucket, project_id, asset_id, object_key, cache_key)
+    profiles = await _voice_profiles(bucket, project_id, asset_id, cache_key, audio_key, turns)
+    if set(profiles) != {turn.speaker for turn in turns}:
+        raise LanguageGenerationError("Speaker voice profiling did not complete")
     return [replace(turn, voice_presentation=profiles[turn.speaker]) for turn in turns]
 
 
-async def _voice_profiles(audio_key: str, turns: list[SpeakerTurn]) -> dict[int, Literal["masculine", "feminine", "neutral"]]:
+async def _voice_profiles(bucket: storage.Bucket, project_id: str, asset_id: str, cache_key: str, audio_key: str, turns: list[SpeakerTurn]) -> dict[int, Literal["masculine", "feminine", "neutral"]]:
     speakers = sorted({turn.speaker for turn in turns})
-    examples = []
-    for speaker in speakers:
-        samples = sorted((turn for turn in turns if turn.speaker == speaker), key=lambda turn: turn.end - turn.start, reverse=True)[:3]
-        examples.append(f"Speaker {speaker}: " + ", ".join(f"{turn.start:.2f}-{turn.end:.2f}s" for turn in samples))
+    samples_by_speaker = {
+        speaker: sorted((turn for turn in turns if turn.speaker == speaker), key=lambda turn: turn.end - turn.start, reverse=True)[:3]
+        for speaker in speakers
+    }
+    if any(not samples for samples in samples_by_speaker.values()):
+        raise LanguagePreflightError("Every diarized speaker needs a representative audio range")
+    profiles: dict[int, Literal["masculine", "feminine", "neutral"]] = {}
     client = genai.Client(vertexai=True, project=settings.google_cloud_project, location=settings.google_cloud_location)
     try:
-        response = await client.aio.models.generate_content(
-            model=VOICE_PROFILE_MODEL,
-            contents=[
-                types.Part.from_uri(file_uri=f"gs://{settings.gcs_bucket}/{audio_key}", mime_type="audio/flac"),
-                "Classify the audible vocal presentation of each numbered diarized speaker using the representative time ranges below. "
-                "This describes the sound needed for casting a synthetic voice, not the speaker's gender identity. Use masculine or feminine when the vocal presentation is clear, and neutral when it is ambiguous. "
-                "Return exactly one profile for every listed speaker.\n" + "\n".join(examples),
-            ],
-            config=types.GenerateContentConfig(temperature=0, max_output_tokens=max(128, len(speakers) * 40), response_mime_type="application/json", response_schema=VoiceProfilePlan, audio_timestamp=True, thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL)),
-        )
+        for speaker in speakers:
+            profile_cache = bucket.blob(f"projects/{project_id}/accessibility/speakers/voices/v2/{asset_id}-{cache_key}-speaker-{speaker}.json")
+            if await asyncio.to_thread(profile_cache.exists):
+                try:
+                    profile = VoicePresentation.model_validate_json(await asyncio.to_thread(profile_cache.download_as_text))
+                except ValueError as error:
+                    raise LanguageGenerationError(f"The saved voice profile for speaker {speaker} is invalid") from error
+            else:
+                ranges = ", ".join(f"{turn.start:.2f}-{turn.end:.2f}s" for turn in samples_by_speaker[speaker])
+                response = await client.aio.models.generate_content(
+                    model=VOICE_PROFILE_MODEL,
+                    contents=[
+                        types.Part.from_uri(file_uri=f"gs://{settings.gcs_bucket}/{audio_key}", mime_type="audio/flac"),
+                        f"Listen only to diarized speaker {speaker} at these ranges: {ranges}. Classify that speaker's audible vocal presentation for synthetic voice casting. "
+                        "This is not the speaker's gender identity. Return masculine or feminine only when the sound is clear; otherwise return neutral.",
+                    ],
+                    config=types.GenerateContentConfig(temperature=0, max_output_tokens=128, response_mime_type="application/json", response_schema=VoicePresentation, audio_timestamp=True, thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL)),
+                )
+                try:
+                    profile = VoicePresentation.model_validate_json(response.text or "{}")
+                except ValueError as error:
+                    raise LanguageGenerationError(f"Gemini returned an invalid voice profile for speaker {speaker}") from error
+                await asyncio.to_thread(profile_cache.upload_from_string, profile.model_dump_json(), content_type="application/json")
+            profiles[speaker] = profile.presentation
     finally:
         await client.aio.aclose()
-    try:
-        plan = VoiceProfilePlan.model_validate_json(response.text or "{}")
-    except ValueError as error:
-        raise RuntimeError("Gemini returned invalid speaker voice profiles") from error
-    profiles = {profile.speaker: profile.presentation for profile in plan.profiles}
-    if set(profiles) != set(speakers):
-        raise RuntimeError("Gemini did not profile every diarized speaker")
     return profiles
+
+
+async def _preflight_source(project_id: str, object_key: str, generation: str, duration: float | None, selection_end: float) -> None:
+    if not generation:
+        raise LanguagePreflightError("The selected media has no verified storage generation")
+    if duration is not None and (not math.isfinite(float(duration)) or float(duration) <= 0 or selection_end > float(duration) + .05):
+        raise LanguagePreflightError("The selected range exceeds the verified media duration")
+    blob = storage.Client(project=settings.google_cloud_project).bucket(settings.gcs_bucket).blob(object_key)
+    try:
+        await asyncio.to_thread(blob.reload)
+    except Exception as error:
+        raise LanguagePreflightError("The selected source media is unavailable") from error
+    if str(blob.generation or "") != generation:
+        raise LanguagePreflightError("The selected source media generation has changed")
+    if not blob.size:
+        raise LanguagePreflightError("The selected source media is empty")
+
+
+def _preflight_turns(turns: list[SpeakerTurn], duration: float | None) -> list[SpeakerTurn]:
+    if not turns:
+        raise LanguagePreflightError("No diarized speaker turns are available")
+    normalized: list[SpeakerTurn] = []
+    for index, turn in enumerate(turns, start=1):
+        if turn.speaker < 1:
+            raise LanguagePreflightError(f"Diarized turn {index} has an invalid speaker ID")
+        if not turn.text.strip():
+            raise LanguagePreflightError(f"Diarized turn {index} has no text")
+        if not math.isfinite(turn.start) or not math.isfinite(turn.end) or turn.start < 0 or turn.end <= turn.start:
+            raise LanguagePreflightError(f"Diarized turn {index} has invalid timing")
+        if duration is not None and turn.end > float(duration) + .5:
+            raise LanguagePreflightError(f"Diarized turn {index} exceeds the media duration")
+        normalized.append(replace(turn, text=" ".join(turn.text.split())))
+    return sorted(normalized, key=lambda turn: (turn.start, turn.end, turn.speaker))
+
+
+def _canonicalize_speakers(turns: list[SpeakerTurn]) -> list[SpeakerTurn]:
+    labels = sorted({turn.speaker for turn in turns})
+    mapping = {label: index + 1 for index, label in enumerate(labels)}
+    return [replace(turn, speaker=mapping[turn.speaker]) for turn in turns]
+
+
+def _bounded_turns(turns: list[SpeakerTurn], duration: float | None) -> list[SpeakerTurn]:
+    if duration is None:
+        return turns
+    boundary = float(duration)
+    return [replace(turn, end=min(turn.end, boundary)) for turn in turns if turn.start < boundary and min(turn.end, boundary) > turn.start]
 
 
 def _diarize(object_key: str, duration: float | None) -> list[SpeakerTurn]:
@@ -199,7 +284,7 @@ def _turns_from_results(results: object) -> list[SpeakerTurn]:
             turns[-1] = SpeakerTurn(previous.start, max(previous.end, word_end), f"{previous.text} {text}", speaker)
         else:
             turns.append(SpeakerTurn(word_start, max(word_start, word_end), text, speaker))
-    return turns
+    return _canonicalize_speakers(turns)
 
 
 async def _translate_turns(turns: list[SpeakerTurn], language: str) -> list[str]:

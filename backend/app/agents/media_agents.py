@@ -25,7 +25,7 @@ AGENT_ROLES = {
     "hearing": ("hearing_agent", "Resolve hearing-accessibility needs using captions, transcripts, ASL cues, and noise reduction. Preserve cue timing and source meaning. ASL generation reads caption text or indexed video descriptions internally; do not create or attach a visible caption track unless the user explicitly requested captions. If apply_asl returns failed, do not call it again and do not switch its source. Finish blocked with the exact error and action; only a new explicit user retry may resume the saved ASL notebook."),
     "deafblind": ("deafblind_agent", "Create media access that does not depend on sight or hearing using Braille-ready text, structured descriptions, labels, navigation, and tactile-cue metadata."),
     "sensory": ("sensory_agent", "Reduce flashing, motion, shake, rapid cuts, clutter, and stimulation while preserving the essential content and timing."),
-    "language": ("language_agent", "Translate captions, dialogue audio, and audio descriptions. Preserve speaker turns, timing, and distinct voice presentation."),
+    "language": ("language_agent", "Translate captions, dialogue audio, and audio descriptions. Preserve speaker turns, timing, and distinct voice presentation. If a language tool returns failed, do not call it again or alter its source. Finish blocked with the exact error and action; only a new explicit user retry may reuse completed cached stages."),
 }
 AGENT_ID_BY_NAME = {name: agent_id for agent_id, (name, _) in AGENT_ROLES.items()}
 SPECIALIST_AGENT_IDS = ("vision", "hearing", "deafblind", "sensory", "language")
