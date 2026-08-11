@@ -42,10 +42,17 @@ export function CreatorChatInput({ agentName, contextNames, disabled, input, mcp
     <form className={styles.form} onSubmit={(event) => { event.preventDefault(); if (canSend) onSend(); }}>
       {mcpOpen && <CreatorMcpPopover onClose={onCloseMcp} />}
       <CreatorChatContext agentName={agentName} contextNames={contextNames} />
-      <CreatorSkillAttachments disabled={disabled} onRemove={onRemoveSkill} skills={selectedSkills} />
       <section className={styles.composer}>
         {timelineShot && <TimelineShotAttachment onRemove={onRemoveTimelineShot} shot={timelineShot} />}
-        <textarea aria-label={`Message ${agentName}`} disabled={disabled} onChange={(event) => onInputChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); if (canSend) onSend(); } }} placeholder={`Ask ${agentName}`} ref={textAreaRef} rows={2} value={input} />
+        <CreatorSkillAttachments disabled={disabled} onRemove={onRemoveSkill} skills={selectedSkills} />
+        <textarea aria-label={`Message ${agentName}`} disabled={disabled} onChange={(event) => onInputChange(event.target.value)} onKeyDown={(event) => {
+          if (event.key === "Backspace" && !input && selectedSkills.length) {
+            event.preventDefault();
+            onRemoveSkill(selectedSkills.at(-1)!.id);
+            return;
+          }
+          if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); if (canSend) onSend(); }
+        }} placeholder={`Ask ${agentName}`} ref={textAreaRef} rows={2} value={input} />
         <footer className={styles.toolbar}>
           <span className={styles.attachments}><button aria-label="MCP connections" onClick={onOpenMcp} title="MCP connections" type="button"><Image alt="" height={17} src="/Model_Context_Protocol_logo.svg" width={17} /></button><button aria-label="Skills" disabled={disabled} onClick={onOpenSkills} title="Skills" type="button"><Image alt="" height={17} src="/accessible-media-icons/scroll-svgrepo-com%20(1).svg" width={17} /></button><button aria-label="Capture Timeline Shot" disabled={disabled} onClick={onCaptureTimeline} title="Capture Timeline Shot" type="button"><ScanLine size={17} /></button></span>
           <button aria-label="Send" disabled={!canSend} type="submit"><ArrowUp size={16} /></button>
