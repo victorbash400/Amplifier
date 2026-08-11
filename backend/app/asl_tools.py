@@ -127,10 +127,17 @@ def _validate_sigml(sigml: str) -> None:
         root = ET.fromstring(sigml)
     except ET.ParseError as error:
         raise RuntimeError("Gemini returned malformed ASL SiGML") from error
-    signs = root.findall("hamgestural_sign")
-    if root.tag != "sigml" or not signs:
+    signs = [element for element in root if _tag(element) == "hamgestural_sign"]
+    if _tag(root) != "sigml" or not signs:
         raise RuntimeError("Gemini returned incomplete ASL SiGML")
     for sign in signs:
-        manual = sign.find("sign_manual")
-        if manual is None or manual.find("handconfig") is None or manual.find("location_bodyarm") is None:
+        manual = next((element for element in sign if _tag(element) == "sign_manual"), None)
+        descendants = list(manual.iter()) if manual is not None else []
+        has_hand_configuration = any(_tag(element) == "handconfig" for element in descendants)
+        has_location = any(_tag(element) in {"location_bodyarm", "location_hand", "handconstellation"} for element in descendants)
+        if manual is None or not has_hand_configuration or not has_location:
             raise RuntimeError("Gemini returned an incomplete ASL sign")
+
+
+def _tag(element: ET.Element) -> str:
+    return element.tag.rsplit("}", 1)[-1]

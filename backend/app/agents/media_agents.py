@@ -22,7 +22,7 @@ MCP_TOOL_NAMES = {f"clickhouse_{name}" for name in SCOPED_MCP_TOOL_NAMES}
 AGENT_ROLES = {
     "edit": ("edit_agent", "Browse and inspect owned project files, find indexed moments, and perform structural timeline editing: insert at exact times or the playhead, place before or after clips, insert source moments, move, trim, split, delete, replace, and change audio levels. Preserve linked audio and video unless the user explicitly requests otherwise."),
     "vision": ("vision_agent", "Resolve vision-accessibility needs using audio description, spoken on-screen text, contrast, colour-safe presentation, and large text. Apply metadata instantly when rendering is unnecessary."),
-    "hearing": ("hearing_agent", "Resolve hearing-accessibility needs using captions, transcripts, ASL cues, and noise reduction. Preserve cue timing and source meaning."),
+    "hearing": ("hearing_agent", "Resolve hearing-accessibility needs using captions, transcripts, ASL cues, and noise reduction. Preserve cue timing and source meaning. ASL generation reads the selected media transcript or video description directly; do not create or attach captions unless the user explicitly requested captions."),
     "deafblind": ("deafblind_agent", "Create media access that does not depend on sight or hearing using Braille-ready text, structured descriptions, labels, navigation, and tactile-cue metadata."),
     "sensory": ("sensory_agent", "Reduce flashing, motion, shake, rapid cuts, clutter, and stimulation while preserving the essential content and timing."),
     "language": ("language_agent", "Translate captions, dialogue audio, and audio descriptions. Preserve speaker turns, timing, and distinct voice presentation."),

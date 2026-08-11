@@ -11,6 +11,9 @@ class AslToolTests(unittest.TestCase):
     def test_accepts_cwasa_sigml(self) -> None:
         _validate_sigml(VALID_SIGML)
 
+    def test_accepts_nested_cwasa_location(self) -> None:
+        _validate_sigml("""<sigml><hamgestural_sign gloss="INTERNET"><sign_manual><handconfig handshape="pinchall"/><handconstellation contact="touch"><location_hand digits="3" location="tip"/><location_bodyarm contact="close" location="shouldertop"/></handconstellation></sign_manual></hamgestural_sign></sigml>""")
+
     def test_rejects_xml_without_signs(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "incomplete"):
             _validate_sigml("<sigml />")

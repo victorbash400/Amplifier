@@ -394,13 +394,13 @@ async def apply_captions(tool_context: ToolContext) -> dict[str, Any]:
     return await _mutate(tool_context, {"kind": "caption_track", "track": track, "change": _selection_change(clip)})
 
 
-async def apply_asl(source: Literal["captions", "transcript"], tool_context: ToolContext) -> dict[str, Any]:
-    """Create an ASL cue track for the selected media."""
+async def apply_asl(source: Literal["transcript", "description"], tool_context: ToolContext) -> dict[str, Any]:
+    """Create an ASL cue track directly from the selected media's transcript or video description."""
     _, clip = await _selected(tool_context)
     asset = await _asset_for_clip(tool_context, clip)
     _, project_id, _ = _state(tool_context)
     cues = await generate_asl_track(project_id, clip["assetId"], clip["trimStart"], clip["trimStart"] + clip["duration"], source, None, asset.get("objectKey"))
-    track = {"clipId": clip["id"], "cues": cues, "placement": {"x": .78, "y": .7}}
+    track = {"clipId": clip["id"], "cues": cues, "placement": {"x": .88, "y": .12}}
     return await _mutate(tool_context, {"kind": "asl_track", "track": track, "change": _selection_change(clip)})
 
 

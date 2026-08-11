@@ -435,7 +435,7 @@ export function TimelinePanel({ agentCommitToken = 0, agentMode, agentSelection,
       const response = await fetch("/api/hearing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, source, cues: attachedTranscript, projectId: visual.asset.projectId, assetId: sourceAssetId, sourceObjectKey: sourceAsset.objectKey, start: visual.trimStart, end: visual.trimStart + visual.duration }) });
       const body = await response.json() as { cues?: TimelineAslTrack["cues"]; error?: string };
       if (!response.ok || !body.cues?.length) throw new Error(body.error || "Could not generate ASL interpretation");
-      onAslChange({ clipId: visual.id, cues: body.cues, placement: { x: 1, y: 1 } });
+      onAslChange({ clipId: visual.id, cues: body.cues, placement: { x: .88, y: .12 } });
     } catch (reason) {
       setVisionError(reason instanceof Error ? reason.message : "ASL generation failed");
     } finally {
